@@ -20,6 +20,13 @@ uv run arrays live --replay recordings/demo_room1   # rehearse the map on a reco
 uv run arrays synth --out recordings/synthetic
 uv run arrays locate --setup recordings/synthetic/setup.yaml --replay recordings/synthetic --realtime
 
+# second array: two UMA-16s 4 m apart, both facing the same way; the live map adds the fix and a
+# probability map over the floor (most likely point, radius holding half the probability)
+cp setup.pair.example.yaml setup.yaml   # fill in the indices from `arrays list`
+uv run arrays live                      # --radius 6 for sources farther than 4 m, --cell 0.2
+uv run arrays synth --setup setup.pair.example.yaml --path 2,3 0.5,2 3.5,1.5 --seconds-per-point 4 --out recordings/pair_synth
+uv run arrays live --replay recordings/pair_synth --fast   # rehearse without the second board
+
 # office twin: probability grid over the office map, works with 1, 2 or more arrays
 # office.yaml: the demo office from plans/office_sketch.png; its `arrays` marks move the setup's arrays
 # (rotation stays from setup.yaml). office.example.yaml is a placeholder to copy for another room.

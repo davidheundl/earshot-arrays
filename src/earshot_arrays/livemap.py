@@ -142,6 +142,20 @@ function draw() {
     }
   }
 
+  // probability map (two or more arrays): cells in the label's colour, faded while it is still flat
+  const bel = st.belief;
+  if (bel) {
+    const fade = Math.min(1, Math.max(0, (bel.concentration - 2) / 15)), cs = bel.cell * s + 0.6;
+    ctx.fillStyle = lc;
+    for (let iy = 0; iy < bel.ny; iy++) for (let ix = 0; ix < bel.nx; ix++) {
+      const a = Math.pow(bel.q[iy * bel.nx + ix] / 255, 1.5) * 0.7 * fade;
+      if (a < 0.02) continue;
+      ctx.globalAlpha = a;
+      ctx.fillRect(X(bel.x0 + ix * bel.cell), Y(bel.y0 + (iy + 1) * bel.cell), cs, cs);
+    }
+    ctx.globalAlpha = 1;
+  }
+
   // the SRP scan: wedges that light up toward the sound, and its outline
   for (const a of cfg.arrays) {
     const o = arr[a.name]; if (!o || !o.scan || !o.scan.length) continue;
@@ -195,6 +209,15 @@ function draw() {
     ctx.globalAlpha = 1; ctx.beginPath(); ctx.arc(X(st.fix.x), Y(st.fix.y), 14, 0, 2 * Math.PI); ctx.fill();
   }
 
+  // most likely cell of the map, with the radius holding half the probability
+  if (bel && bel.concentration > 3) {
+    const e = bel.estimate;
+    ctx.strokeStyle = "#e6edf3"; ctx.lineWidth = 2; ctx.setLineDash([6, 6]); ctx.beginPath();
+    ctx.arc(X(e.x), Y(e.y), Math.max(e.r50 * s, 12), 0, 2 * Math.PI); ctx.stroke(); ctx.setLineDash([]);
+    ctx.beginPath(); ctx.moveTo(X(e.x) - 10, Y(e.y)); ctx.lineTo(X(e.x) + 10, Y(e.y));
+    ctx.moveTo(X(e.x), Y(e.y) - 10); ctx.lineTo(X(e.x), Y(e.y) + 10); ctx.stroke();
+  }
+
   // arrays and north
   for (const a of cfg.arrays) {
     ctx.fillStyle = "#e6edf3"; ctx.fillRect(X(a.x) - 9, Y(a.y) - 9, 18, 18);
@@ -220,6 +243,8 @@ function hud() {
   for (const [n, o] of Object.entries(arr))
     lines.push(`${n}: <b>${Math.round(o.bearing)}°</b> · clarity ${o.power.toFixed(2)} · ${Math.round(o.level_db)} dBFS`);
   if (st.fix) lines.push(`fix (${st.fix.x.toFixed(2)}, ${st.fix.y.toFixed(2)}) m ± ${st.fix.sigma.toFixed(2)}`);
+  if (st.belief && st.belief.concentration > 3) { const e = st.belief.estimate;
+    lines.push(`most likely (${e.x.toFixed(2)}, ${e.y.toFixed(2)}) m · half the probability within ${e.r50.toFixed(2)} m`); }
   document.getElementById("status").innerHTML = lines.join("<br>");
   document.getElementById("foot").textContent = `classifier: ${cfg.classifier} · audio: ${cfg.audio}` +
     ` · class shown when clarity ≥ ${cfg.gate} (loudest ${Math.round(100 * cfg.loudest)} % of frames), not quiet, and ≥ ${Math.round(100 * cfg.min_prob)} % sure · direction over ${cfg.doa_s} s`;
@@ -263,6 +288,7 @@ def add_parser(sub, live) -> None:
     p = live(sub.add_parser("live", help="interactive live map in the browser: direction, scan, class (+ fix)"))
     p.add_argument("--setup", help="setup YAML (default: the replay directory's, else setup.yaml)")
     p.add_argument("--radius", type=float, default=4.0, help="metres shown around the arrays")
+    p.add_argument("--cell", type=float, default=0.2, help="cell size of the probability map (two or more arrays)")
     p.add_argument("--port", type=int, default=8765)
     p.add_argument("--mix", action="store_true", help="classify the mic mean instead of a beam toward the bearing")
     p.add_argument("--doa-s", type=float, default=2.0, help="seconds of audio per direction estimate (steadier when longer)")
@@ -283,6 +309,7 @@ def cmd_live(a) -> None:
     from collections import deque
     from pathlib import Path
 
+    from earshot_arrays.belief import Grid
     from earshot_arrays.classify import load_classifier
     from earshot_arrays.cli import open_sources
     from earshot_arrays.config import load_setup
@@ -310,7 +337,12 @@ def cmd_live(a) -> None:
     print(f"live map: {server.url}  ({source}, {len(s.arrays)} array(s), classifier {clf.name}). Ctrl-C to stop.")
     if not a.no_browser:
         webbrowser.open(server.url)
-    tracker = Tracker({arr.name: arr.pose for arr in s.arrays}, min_prob=a.min_prob or MIN_PROB)
+    grid = None
+    if len(s.arrays) >= 2:  # one array only gives a fan: the ray says as much
+        xs, ys = [arr.pose.x for arr in s.arrays], [arr.pose.y for arr in s.arrays]
+        grid = Grid.from_bounds(min(xs) - a.radius, min(ys) - a.radius, max(xs) + a.radius, max(ys) + a.radius,
+                                a.cell)
+    tracker = Tracker({arr.name: arr.pose for arr in s.arrays}, min_prob=a.min_prob or MIN_PROB, grid=grid)
     gate = a.gate or GATE
     history = {arr.name: deque(maxlen=max(1, round(a.doa_s))) for arr in s.arrays}  # last blocks per array
     t, start, last = 0.0, time.monotonic(), {}
@@ -398,7 +430,10 @@ def cmd_live(a) -> None:
             for i, arr in enumerate(s.arrays):
                 if bad[arr.name] >= BAD_S:
                     reopen(i, f"no direction for {BAD_S} s although audio arrives")
+            e = state.estimate
             print(f"t={t:5.0f}s  " + "  ".join(f"{n} {o.bearing:5.1f}° p{o.power:4.2f}" for n, o in obs.items())
+                  + (f"  fix ({state.fix.x:5.2f}, {state.fix.y:5.2f})" if state.fix else "")
+                  + (f"  map ({e.x:5.2f}, {e.y:5.2f}) ±{e.r50:.2f}" if e else "")
                   + f"  -> {state.label} {state.prob:.0%}" + (f"  ({state.why})" if state.why else ""),
                   flush=True)
             t = (t + blocks[0].shape[1] / arr.profile.fs) if a.replay else time.monotonic() - start

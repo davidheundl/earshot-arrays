@@ -54,7 +54,7 @@ def test_live_map_reopens_a_device_that_starts_delivering_garbage(tmp_path, monk
     monkeypatch.setattr(livemap.LiveMapServer, "close", lambda self: None)
     FakeDevice.opened = 0
     a = argparse.Namespace(setup=str(tmp_path / "setup.yaml"), replay=None, realtime=False, radius=4.0, port=0,
-                           mix=False, fast=False, no_browser=True, doa_s=2.0, gate=None, min_prob=None, loudest=0.3)
+                           mix=False, fast=False, no_browser=True, cell=0.2, doa_s=2.0, gate=None, min_prob=None, loudest=0.3)
     livemap.cmd_live(a)  # returns when the reopened fake device sends Ctrl-C
     assert FakeDevice.opened == 2
 

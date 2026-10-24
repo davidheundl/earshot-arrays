@@ -52,6 +52,16 @@ Planned layout (create as needed, keep it small):
 5. Put both arrays as far apart as the table allows (bearings cross badly when the source is near the line between them), measure their poses, then `arrays locate`.
 6. Record a few sessions with `record` (drone, phone playing a plane, speech) for rehearsal and as a fallback if the hardware fails during the pitch.
 
+## When the second array arrives
+
+Two UMA-16s, 4 m apart, both facing the demo area: `setup.pair.example.yaml` has the poses and the checks.
+
+1. `arrays list`, then `arrays meter --profile profiles/uma16.yaml --device N` per board: which index is A, which B. Write both into `setup.yaml`.
+2. Same board edge toward the demo area on both. Per board `arrays bearing --setup setup.yaml --array A` (then B): a clap 2 m in front reads ~0, else fix that board's `rotation_deg`.
+3. Pose check with both: a sound at (2, 2) reads A ~45, B ~315.
+4. `arrays live`: fix and probability map appear once both arrays are clear. Keep the source 1.5-4 m in front, not on the line through both boards.
+5. `arrays record` a few sessions with both, for `--replay` rehearsal.
+
 ## Verify
 
 `uv run pytest` and `uv run ruff check src tests`. Before the demo also a short live `arrays locate` with the real arrays, and a `--replay` run of a recorded session.

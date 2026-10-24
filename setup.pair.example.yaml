@@ -1,0 +1,27 @@
+# Two UMA-16s side by side, 4 m apart, both facing the same way (`arrays live`). Copy to setup.yaml.
+#
+# Room frame: metres, origin at array A's centre, x along the line A -> B ("east"), y the direction
+# both boards face ("north", where the sound will be). Bearings clockwise from north.
+#   - Lay both boards flat (components up), the same board edge toward the demo area, so both get
+#     the same rotation_deg. Check it per board: clap 2 m in front of it, `arrays bearing --setup
+#     setup.yaml --array A` (then B) should read ~0; adjust that board's rotation_deg until it does.
+#   - Measure the 4 m centre to centre; if it ends up different, change B's x. A tilt between the
+#     boards is just a different rotation_deg, a step forward a different y.
+#   - Both boards are called "UMA16", so a name matches both: use the indices from `arrays list` and
+#     tap each board with `arrays meter --profile profiles/uma16.yaml --device N` to see which is A
+#     (indices can swap when a board is plugged in again).
+#
+# Pose check with both: a sound at (2, 2), 2 m in front of the midpoint, reads A ~45 and B ~315;
+# at (0, 2), in front of A, A ~0 and B ~297. The fix is best 1.5-4 m in front of the pair and gets
+# poor near the line through both boards (the rays are almost parallel there). The live map and its
+# probability grid reach --radius (default 4 m) beyond the boards; give more for a farther source.
+table: {width: 4.0, depth: 0.5}
+arrays:
+  - name: A
+    profile: profiles/uma16.yaml
+    device: 2
+    pose: [0.0, 0.0, 0.0]
+  - name: B
+    profile: profiles/uma16.yaml
+    device: 3
+    pose: [4.0, 0.0, 0.0]

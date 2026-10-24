@@ -13,12 +13,19 @@ of MIN_PROB (below: "–", the model is unsure, e.g. a fan it never heard); a la
 stays while it is still the top class and above KEEP_PROB, so one interrupting second neither
 flips nor blanks it. With two gated arrays
 the bearings are crossed into a fix (locate.intersect). The trail keeps the last TRAIL gated seconds.
+
+With a `grid` the tracker also keeps a probability map over the floor (belief.Belief): every second
+spreads it (motion), and each clear array multiplies in a narrow bump at its bearing. One array draws
+a fan, two crossing bearings a blob; it fades back to uniform when nothing clear is heard.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import numpy as np
+
+from earshot_arrays.belief import Belief, Estimate, Grid, bearing_grid, peak_likelihood
 from earshot_arrays.config import Pose
 from earshot_arrays.locate import Fix, intersect
 
@@ -67,6 +74,9 @@ class State:
     clear: bool
     fix: Fix | None
     trail: list[TrailPoint] = field(default_factory=list)
+    belief: np.ndarray | None = None  # (ny, nx) probability over the grid, sums to 1
+    grid: Grid | None = None
+    estimate: Estimate | None = None  # most likely cell of the belief
 
     def to_json(self) -> dict:
         r = lambda v: round(float(v), 3)
@@ -79,7 +89,20 @@ class State:
             "fix": None if self.fix is None else {"x": r(self.fix.x), "y": r(self.fix.y), "sigma": r(self.fix.sigma)},
             "trail": [{"t": r(p.t), "label": p.label, "bearings": {n: r(b) for n, b in p.bearings.items()},
                        "fix": None if p.fix is None else [r(p.fix[0]), r(p.fix[1])]} for p in self.trail],
+            "belief": None if self.belief is None else belief_json(self.belief, self.grid, self.estimate),
         }
+
+
+def belief_json(p: np.ndarray, grid: Grid, est: Estimate) -> dict:
+    """The map for the page: cells as 0..255 of the most likely one, rows south to north.
+
+    `concentration` is p_max over the uniform value (1 = nothing known), so the page can fade a flat map."""
+    q = np.round(255.0 * p / max(float(p.max()), 1e-300)).astype(int)
+    r = lambda v: round(float(v), 3)
+    return {"x0": r(grid.x0), "y0": r(grid.y0), "cell": r(grid.cell), "nx": grid.nx, "ny": grid.ny,
+            "q": q.ravel().tolist(), "concentration": r(est.p_max * max(int(grid.mask.sum()), 1)),
+            "estimate": {"x": r(est.x), "y": r(est.y), "r50": r(est.r50), "p_max": r(est.p_max),
+                         "mass_near": r(est.mass_near)}}
 
 
 def display_probs(probs: dict[str, float]) -> dict[str, float]:
@@ -91,8 +114,11 @@ def display_probs(probs: dict[str, float]) -> dict[str, float]:
 
 class Tracker:
     def __init__(self, poses: dict[str, Pose], alpha: float = ALPHA, hold_s: float = HOLD_S, trail: int = TRAIL,
-                 min_prob: float = MIN_PROB):
+                 min_prob: float = MIN_PROB, grid: Grid | None = None):
         self.poses, self.alpha, self.hold_s, self.n_trail, self.min_prob = poses, alpha, hold_s, trail, min_prob
+        self.grid = grid
+        self.belief = None if grid is None else Belief(grid)
+        self.bearings = {} if grid is None else {n: bearing_grid(grid, pose) for n, pose in poses.items()}
         self.smoothed: dict[str, float] = {}
         self.last_clear_t: float | None = None
         self.trail: list[TrailPoint] = []
@@ -127,4 +153,11 @@ class Tracker:
             self.trail.append(TrailPoint(t, label, {n: obs[n].bearing for n in clear},
                                          None if fix is None else (fix.x, fix.y)))
             self.trail = self.trail[-self.n_trail:]
-        return State(t, obs, label, prob, why, dict(self.smoothed), raw, bool(clear), fix, list(self.trail))
+        est = None
+        if self.belief is not None:  # assumes one update per second, as the live loop runs
+            self.belief.predict()
+            self.belief.update([peak_likelihood(self.bearings[n], obs[n].bearing, obs[n].power, min_power=0.0)
+                                for n in clear])
+            est = self.belief.estimate()
+        return State(t, obs, label, prob, why, dict(self.smoothed), raw, bool(clear), fix, list(self.trail),
+                     None if self.belief is None else self.belief.p.copy(), self.grid, est)
