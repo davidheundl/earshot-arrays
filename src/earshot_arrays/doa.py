@@ -33,13 +33,17 @@ def estimate_bearing(block: np.ndarray, fs: int, mic_xy: np.ndarray, rotation_de
     stft = np.stack([pra.transform.stft.analysis(ch, NFFT, NFFT // 2).T for ch in block])
     doa = pra.doa.algorithms["SRP"](mic_xy, fs, NFFT, c=C, num_src=1)
     doa.locate_sources(stft, freq_range=[band[0], hi])
-    az = float(np.degrees(doa.azimuth_recon[0]))  # counter-clockwise from the array's +x axis
     grid = np.asarray(doa.grid.values, dtype=float)
+    if len(doa.azimuth_recon) == 0 or not np.all(np.isfinite(grid)):  # a silent block (all zeros): no direction
+        if scan is not None:
+            scan[:] = [0.0] * SCAN_BINS
+        return rotation_deg % 360.0, 0.0
+    az = float(np.degrees(doa.azimuth_recon[0]))  # counter-clockwise from the array's +x axis
     power = float(grid.max() / max(grid.mean(), 1e-12))
     if scan is not None:
         compass = (90.0 - np.degrees(np.asarray(doa.grid.azimuth)) + rotation_deg) % 360.0
         bins = np.zeros(SCAN_BINS)
-        idx = (compass // (360.0 / SCAN_BINS)).astype(int) % SCAN_BINS
+        idx = (np.round(compass, 6) // (360.0 / SCAN_BINS)).astype(int) % SCAN_BINS  # 239.99999 is bin 48
         np.maximum.at(bins, idx, grid / max(grid.max(), 1e-12))
         scan[:] = [float(v) for v in bins]
     return array_to_room(az, rotation_deg), power

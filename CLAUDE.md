@@ -30,7 +30,10 @@ Planned layout (create as needed, keep it small):
 - `src/earshot_arrays/locate.py`: pure: two array poses + two bearings → position, or None.
 - `src/earshot_arrays/classify.py`: EfficientAT if torch and weights load; else a stand-in that says so on screen. A run never stops because a model is missing.
 - `src/earshot_arrays/replay.py`: feed a multichannel WAV in place of a device, so everything can be rehearsed without hardware.
-- `src/earshot_arrays/cli.py`: `arrays list | meter | bearing | locate | record`.
+- `src/earshot_arrays/belief.py`: pure: probability grid over the floor; each array's bearing multiplies in a narrow bump (3 deg) at every cell's exact bearing, one array gives a fan, two or more a blob.
+- `src/earshot_arrays/office.py`: `office.yaml` (floor, walls, furniture, the arrays' marks, optional floor-plan image) → `Office`.
+- `src/earshot_arrays/twin.py`: the 2D office twin plot: map, arrays, rays, probability grid, estimate, class.
+- `src/earshot_arrays/cli.py`: `arrays list | meter | bearing | locate | twin | record`.
 
 ## Rules
 

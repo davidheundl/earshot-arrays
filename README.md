@@ -19,6 +19,14 @@ uv run arrays live --replay recordings/demo_room1   # rehearse the map on a reco
 # rehearse without hardware
 uv run arrays synth --out recordings/synthetic
 uv run arrays locate --setup recordings/synthetic/setup.yaml --replay recordings/synthetic --realtime
+
+# office twin: probability grid over the office map, works with 1, 2 or more arrays
+# office.yaml: the demo office from plans/office_sketch.png; its `arrays` marks move the setup's arrays
+# (rotation stays from setup.yaml). office.example.yaml is a placeholder to copy for another room.
+uv run arrays twin --setup setup.yaml # live; --office FILE, --cell 0.25, --no-plot, --save-plot PNG
+uv run arrays synth --office office.example.yaml --path 5,6 6.5,7 8,6.5 9.5,5.5 --out recordings/office_synth
+uv run arrays twin --setup recordings/office_synth/setup.yaml --office office.example.yaml \
+  --replay recordings/office_synth --realtime
 ```
 
 See [CLAUDE.md](CLAUDE.md) for the pipeline, the planned modules and the setup checklist for the day.

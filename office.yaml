@@ -1,0 +1,37 @@
+# The demo office, from David's sketch (plans/office_sketch.png, Oct 24) with the two red marks.
+#
+# Scale: the arrays' table is 5 m long and 249 px on the sketch -> 0.0201 m/px. Room (0, 0) is the
+# sketch's bottom-left (pixel [31, 968]), x east = right, y north = up on the sketch. Every other
+# length is read off a hand drawing, so expect ±0.5 m; the array marks are what matters.
+# Pixel -> metres: x = (u - 31) * 0.0201, y = (968 - v) * 0.0201.
+name: Office
+bounds: [0.0, 0.0, 17.31, 18.63]  # xmin, ymin, xmax, ymax: the probability grid
+cell: 0.5
+# the open floor: the room, the corridor going south, and the open strip left of the block
+floor: [[0, 0], [4.02, 0], [4.02, 5.44], [8.57, 5.44], [8.57, 0], [11.24, 0], [11.24, 5.52],
+        [17.31, 5.52], [17.31, 18.63], [0, 18.63]]
+walls:  # the sketch leaves the west side open
+  - [[0, 18.63], [17.31, 18.63], [17.31, 5.52], [11.24, 5.52], [11.24, 0]]
+  - [[4.02, 0], [4.02, 5.44], [8.57, 5.44], [8.57, 0]]
+areas:
+  - {name: "", kind: room, polygon: [[4.02, 0], [8.57, 0], [8.57, 5.44], [4.02, 5.44]]}
+  - {name: "", kind: furniture, polygon: [[0.98, 11.06], [2.55, 11.06], [2.55, 17.87], [0.98, 17.87]]}
+  - {name: "", kind: furniture, polygon: [[3.39, 11.33], [5.1, 11.33], [5.1, 17.87], [3.39, 17.87]]}
+  - {name: "", kind: furniture, polygon: [[6.08, 10.62], [11.27, 10.62], [11.27, 15.28], [6.08, 15.28]]}
+  - {name: "", kind: furniture, polygon: [[11.14, 16.22], [16.1, 16.22], [16.1, 18.07], [11.14, 18.07]]}
+  - {name: "", kind: furniture, polygon: [[12.39, 11.41], [14.0, 11.41], [14.0, 15.16], [12.39, 15.16]]}
+  - {name: "", kind: furniture, polygon: [[12.43, 6.18], [14.0, 6.18], [14.0, 10.92], [12.43, 10.92]]}
+  - {name: Arrays table, kind: furniture, polygon: [[15.2, 5.98], [16.97, 5.98], [16.97, 10.98], [15.2, 10.98]]}
+  - {name: "", kind: furniture, polygon: [[1.91, 6.95], [3.21, 6.95], [3.21, 9.3], [1.91, 9.3]]}
+labels:
+  - {text: "Table 5 m", at: [16.08, 10.4]}
+  - {text: Corridor, at: [9.9, 2.6]}
+# The sketch itself as the backdrop (switch on for the hand-drawn look):
+# image: plans/office_sketch.png
+# image_scale: 0.0201
+# image_origin_px: [31, 968]
+arrays:  # name: [x, y]; rotation_deg comes from setup.yaml (0 = the array's forward axis points north, up)
+  A: [16.03, 8.70]  # upper red mark
+  B: [16.07, 7.56]  # lower red mark: only 1.1 m from A
+  # Bearings from 1.1 m apart barely cross beyond a few metres. Wider is much better, e.g. the two
+  # table ends (4.2 m):  A: [16.08, 10.6]   B: [16.08, 6.4]

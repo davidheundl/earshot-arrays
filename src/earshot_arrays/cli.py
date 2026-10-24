@@ -1,8 +1,9 @@
-"""`arrays list | meter | bearing | locate | record | synth`. Every live command takes `--replay`."""
+"""`arrays list | meter | bearing | locate | twin | record | synth`. Every live command takes `--replay`."""
 
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import math
 import time
 from datetime import datetime
@@ -263,6 +264,116 @@ class LivePlot:
         self.fig.savefig(path, dpi=120, bbox_inches="tight")
 
 
+class Tracker:
+    """Probability grid over the office, fed once per second by every array's scan (any number of arrays)."""
+
+    def __init__(self, arrays, grid, min_power: float = MIN_POWER):
+        from earshot_arrays.belief import Belief, bearing_grid
+
+        self.arrays, self.min_power = list(arrays), min_power  # ArraySetups, poses already in the room frame
+        self.bearings = [bearing_grid(grid, arr.pose) for arr in self.arrays]  # fixed per pose: once
+        self.belief = Belief(grid)
+
+    def step(self, blocks, classify=None):
+        """(rays [(bearing, power)], Estimate, class Result or None) after one block from every array."""
+        from earshot_arrays.belief import peak_likelihood
+        from earshot_arrays.doa import estimate_bearing
+
+        rays, obs = [], []
+        for arr, bearings, block in zip(self.arrays, self.bearings, blocks):
+            b, p = estimate_bearing(mics(block, arr.profile), arr.profile.fs, arr.profile.mic_xy,
+                                    arr.pose.rotation_deg)
+            rays.append((b, p))
+            obs.append(peak_likelihood(bearings, b, p, min_power=self.min_power))
+        self.belief.predict()
+        self.belief.update(obs)
+        cls = None
+        if classify is not None:  # the loudest array's mic mix, as in locate
+            k = int(np.argmax([np.mean(np.square(b)) for b in blocks]))
+            arr = self.arrays[k]
+            cls = classify(mics(blocks[k], arr.profile).mean(axis=0), arr.profile.fs)
+        return rays, self.belief.estimate(), cls
+
+
+def office_arrays(s: Setup, office) -> tuple[ArraySetup, ...]:
+    """The setup's arrays moved onto the office's marks (by name), rotation kept from the setup; says which."""
+    from earshot_arrays.office import mark_pose
+
+    out = []
+    for arr in s.arrays:
+        mark = office.arrays.get(arr.name)
+        if mark is None:
+            print(f"warning: array {arr.name} has no mark in {office.name!r}; using its setup pose "
+                  f"({arr.pose.x}, {arr.pose.y}, {arr.pose.rotation_deg})")
+            out.append(arr)
+        else:
+            print(f"{arr.name}: office mark ({mark[0]}, {mark[1]}) replaces setup ({arr.pose.x}, {arr.pose.y}); "
+                  f"rotation {arr.pose.rotation_deg} from the setup")
+            out.append(dataclasses.replace(arr, pose=mark_pose(arr.pose, mark)))
+    return tuple(out)
+
+
+def find_office(path: str | None):
+    from earshot_arrays.office import load_office
+
+    if path is None:
+        if Path("office.yaml").exists():
+            path = "office.yaml"
+        else:
+            path = "office.example.yaml"
+            print("note: no office.yaml, using the placeholder office.example.yaml")
+    if not Path(path).exists():
+        raise SystemExit(f"{path} not found (copy office.example.yaml to office.yaml and fill it in)")
+    return load_office(path)
+
+
+def cmd_twin(a) -> None:
+    from earshot_arrays.classify import load_classifier
+
+    s = load_setup(a.setup)
+    office = find_office(a.office)
+    if a.cell:
+        office = dataclasses.replace(office, cell=a.cell)
+    arrays = office_arrays(s, office)
+    grid = office.grid()
+    tracker = Tracker(arrays, grid)
+    sources = open_sources(arrays, a)
+    classify = load_classifier()
+    plot = None
+    if not a.no_plot:
+        from earshot_arrays.twin import TwinPlot
+
+        plot = TwinPlot(office, [(arr.name, arr.pose) for arr in arrays], grid, show=not a.save_plot)
+    print(f"{office.name}: {grid.nx} x {grid.ny} cells of {grid.cell} m, {len(arrays)} array(s); "
+          f"classifier: {classify.name} {getattr(classify, 'reason', '')}")
+    t, ended = 0, False
+    try:
+        while True:
+            blocks = [src.read(latest=True) for src in sources]
+            if any(b is None for b in blocks):
+                ended = True
+                break
+            rays, est, cls = tracker.step(blocks, classify)
+            print(f"t={t:4d}s  " + "  ".join(f"{arr.name} {b:6.1f}° p{p:4.2f}" for arr, (b, p) in
+                                           zip(arrays, rays))
+                  + f"  est ({est.x:5.2f}, {est.y:5.2f}) m ± {est.r50:.2f} p_max {est.p_max:.3f}"
+                  + f"  {cls.label} [{cls.source}]")
+            if plot:
+                plot.update(tracker.belief.p, rays, est, cls, t)
+            t += 1
+    except KeyboardInterrupt:
+        pass
+    finally:
+        for src in sources:
+            src.close()
+        if plot and a.save_plot:
+            plot.save(a.save_plot)
+            print(f"plot saved to {a.save_plot}")
+    if plot and plot.show and ended:  # end of a replay: keep the last frame up until the window is closed
+        print("end of recording; close the plot window to exit")
+        plot.hold()
+
+
 def cmd_record(a) -> None:
     s = load_setup(a.setup)
     out = Path(a.out or f"recordings/{datetime.now():%Y%m%d-%H%M%S}")
@@ -302,9 +413,14 @@ def cmd_synth(a) -> None:
     from earshot_arrays.synth import synth_session
 
     s = load_setup(a.setup)
+    if a.office:  # office scale: the arrays stand on the office's marks, written into the session's setup
+        from earshot_arrays.office import load_office
+
+        s = dataclasses.replace(s, arrays=office_arrays(s, load_office(a.office)))
     pts = [tuple(float(v) for v in p.split(",")) for p in a.path]
     out = synth_session(s, pts, a.out, a.seconds_per_point)
-    print(f"synthetic session in {out}/\nreplay: uv run arrays locate --setup {out}/setup.yaml --replay {out}")
+    cmd = f"twin --office {a.office}" if a.office else "locate"
+    print(f"synthetic session in {out}/\nreplay: uv run arrays {cmd} --setup {out}/setup.yaml --replay {out}")
 
 
 def main() -> None:
@@ -342,6 +458,14 @@ def main() -> None:
     p.add_argument("--save-plot", metavar="PNG", help="no window; save the last frame here")
     p.set_defaults(fn=cmd_locate)
 
+    p = live(sub.add_parser("twin", help="1, 2 or more arrays → probability grid over the office map + class"))
+    p.add_argument("--setup", default="setup.yaml")
+    p.add_argument("--office", help="office YAML (default office.yaml, else the placeholder office.example.yaml)")
+    p.add_argument("--cell", type=float, help="grid cell size in metres (overrides the office's)")
+    p.add_argument("--no-plot", action="store_true", help="print estimates only")
+    p.add_argument("--save-plot", metavar="PNG", help="no window; save the last frame here")
+    p.set_defaults(fn=cmd_twin)
+
     from earshot_arrays.livemap import add_parser as add_live_map
     add_live_map(sub, live)
 
@@ -357,11 +481,13 @@ def main() -> None:
     p.add_argument("--out", help="default data/models/room_head.pt")
     p.set_defaults(fn=cmd_train)
 
-    p = sub.add_parser("synth", help="write a synthetic two-array session (rehearsal without hardware)")
+    p = sub.add_parser("synth", help="write a synthetic session (rehearsal without hardware)")
     p.add_argument("--setup", default="setup.example.yaml")
     p.add_argument("--path", nargs="+", default=["0.8,0.6", "0.4,0.5", "1.2,0.4"], metavar="X,Y",
-                   help="source positions in metres, visited in turn")
+                   help="source positions in metres, visited in turn (default: points on the table)")
     p.add_argument("--seconds-per-point", type=int, default=3)
+    p.add_argument("--office", help="office YAML: put the arrays on its marks (office scale, for `twin`), e.g. "
+                   "--office office.example.yaml --path 5,6 6.5,7 8,6.5 9.5,5.5 --out recordings/office_synth")
     p.add_argument("--out", default="recordings/synthetic")
     p.set_defaults(fn=cmd_synth)
 

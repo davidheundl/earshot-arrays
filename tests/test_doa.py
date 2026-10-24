@@ -5,7 +5,7 @@ import pytest
 
 from earshot_arrays.config import Pose, load_profile, mic_xy_from
 from earshot_arrays.devices import mics
-from earshot_arrays.doa import angle_diff, estimate_bearing
+from earshot_arrays.doa import SCAN_BINS, angle_diff, estimate_bearing
 from earshot_arrays.synth import array_block, drone_like
 
 PROFILE = load_profile("profiles/respeaker_usb_v2.yaml")
@@ -74,3 +74,10 @@ def test_uma16_grid_bearing(bearing):
     block = array_block(src, pose, prof, drone_like(prof.fs, prof.fs, rng), rng)
     est, _ = estimate_bearing(mics(block, prof), prof.fs, prof.mic_xy, pose.rotation_deg)
     assert abs(angle_diff(est, bearing)) < 5.0
+
+
+def test_silent_block_has_no_direction():
+    scan: list = []
+    _, power = estimate_bearing(np.zeros((4, 16000)), 16000, PROFILE.mic_xy, scan=scan)
+    assert power == 0.0
+    assert scan == [0.0] * SCAN_BINS

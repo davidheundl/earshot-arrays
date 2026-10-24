@@ -1,0 +1,39 @@
+# PLACEHOLDER office: a plain 14 m x 9 m open-plan room. Replace it with the real plan (copy to office.yaml).
+#
+# Room frame: metres, x east, y north (up on the map). Pick room (0, 0) at a corner you can find on the
+# plan and on the floor (e.g. the south-west wall corner), and "north" = the same table edge as in setup.yaml.
+#
+# Floor-plan image (optional, PNG/JPG; export HEIC photos/scans to PNG first), north-up:
+#   image_scale: metres per pixel = a known length in metres / the same length in pixels on the image
+#                (e.g. a 7.2 m wall that is 960 px long -> 0.0075).
+#   image_origin_px: [u, v] = the pixel of room (0, 0), counted from the image's top-left, u right, v down.
+#   Or instead give two known points and let the loader solve both (x and y scale must agree within 5%):
+#     image_ref:
+#       - {px: [112, 840], m: [0.0, 0.0]}
+#       - {px: [1980, 95], m: [14.0, 5.6]}
+#
+# arrays: where the arrays stand (the red marks on the plan). Read each mark's centre in room metres
+# (from the image: x = (u - u0) * s, y = (v0 - v) * s). These replace x, y of the poses in setup.yaml by
+# array name; rotation_deg stays the setup's (calibrated with `arrays bearing`, 0 = forward axis north).
+name: Office (placeholder)
+bounds: [0.0, 0.0, 14.0, 9.0]  # xmin, ymin, xmax, ymax: the extent of the probability grid
+cell: 0.5                       # grid cell size in metres
+floor: [[0, 0], [14, 0], [14, 9], [0, 9]]  # cells outside this polygon are not the floor
+walls:  # polylines, metres
+  - [[0, 0], [14, 0], [14, 9], [0, 9], [0, 0]]
+  - [[0, 1.8], [2.5, 1.8]]       # corridor wall along the south side, with two openings
+  - [[4.0, 1.8], [10.0, 1.8]]
+  - [[11.5, 1.8], [14, 1.8]]
+areas:
+  - {name: Corridor, kind: room, polygon: [[0, 0], [14, 0], [14, 1.8], [0, 1.8]]}
+  - {name: Meeting, kind: glass, polygon: [[11, 6], [14, 6], [14, 9], [11, 9]]}
+  - {name: Long table, kind: furniture, polygon: [[3.5, 5.0], [9.5, 5.0], [9.5, 6.2], [3.5, 6.2]]}
+  - {name: Desks, kind: furniture, polygon: [[0.6, 7.2], [3.0, 7.2], [3.0, 8.4], [0.6, 8.4]]}
+labels:
+  - {text: Corridor, at: [7.0, 0.9]}
+  - {text: Long table, at: [6.5, 5.6]}
+  - {text: Meeting, at: [12.5, 7.5]}
+  - {text: Entrance, at: [3.25, 1.4]}
+arrays:  # name: [x, y]; 7 m apart, off the line the speaker walks (around the table)
+  A: [3.5, 2.8]
+  B: [10.5, 2.8]
