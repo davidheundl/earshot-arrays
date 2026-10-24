@@ -4,7 +4,9 @@
     state = tracker.update(t, {"A": Obs(bearing, power, scan, level_db), ...}, probs)
 
 The "clear direction" gate: a second counts only if some array's SRP power is >= GATE (a sound
-stands out from one direction). Class probabilities are smoothed over gated seconds (each new
+stands out from one direction; the live map computes it on the loudest frames, so speech with
+pauses passes) and the classifier's own top class for it is not "quiet" (a directional fan or
+air conditioning passes the power test but is no event). Class probabilities are smoothed over gated seconds (each new
 second weighs ALPHA, so a single interrupting second does not flip the label), and the label is
 dropped ("–") after HOLD_S seconds without a gated second. A new label needs a smoothed probability
 of MIN_PROB (below: "–", the model is unsure, e.g. a fan it never heard); a label already shown
@@ -20,7 +22,8 @@ from dataclasses import dataclass, field
 from earshot_arrays.config import Pose
 from earshot_arrays.locate import Fix, intersect
 
-GATE = 1.3  # SRP peak / mean: a direction stands out (as cli.MIN_POWER)
+GATE = 1.2  # SRP peak / mean on the loudest frames: a direction stands out
+QUIET = {"quiet"}  # top classes that never count as an event
 ALPHA = 0.4  # weight of the newest gated second in the smoothed class probabilities (~2-3 s memory)
 HOLD_S = 3.0  # seconds without a gated second before the label is dropped
 MIN_PROB = 0.6  # smoothed top class below this: shown as "–" (unsure)
@@ -98,7 +101,7 @@ class Tracker:
     def update(self, t: float, obs: dict[str, Obs], probs: dict[str, float]) -> State:
         probs = display_probs(probs)
         raw = max(probs, key=probs.get) if probs else NONE
-        clear = [n for n, o in obs.items() if o.clear]
+        clear = [n for n, o in obs.items() if o.clear] if raw not in QUIET else []
         fix = None
         if len(clear) >= 2:
             a, b = clear[:2]
@@ -113,7 +116,7 @@ class Tracker:
                                  for k in keys}
         elif self.last_clear_t is None or t - self.last_clear_t > self.hold_s:
             self.smoothed = {}
-        label, prob, why = NONE, 0.0, "no clear direction"
+        label, prob, why = NONE, 0.0, "quiet" if raw in QUIET else "no clear direction"
         if self.smoothed:
             top = max(self.smoothed, key=self.smoothed.get)
             prob = self.smoothed[top]

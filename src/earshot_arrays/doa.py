@@ -21,16 +21,24 @@ SCAN_BINS = 72  # 5 deg
 
 
 def estimate_bearing(block: np.ndarray, fs: int, mic_xy: np.ndarray, rotation_deg: float = 0.0,
-                     band: tuple[float, float] = BAND, scan: list | None = None) -> tuple[float, float]:
+                     band: tuple[float, float] = BAND, scan: list | None = None,
+                     loudest: float | None = None) -> tuple[float, float]:
     """(room bearing in degrees, relative peak power) of the loudest source in the block.
 
     block: (n_mics, n_samples) float, channels in the order of mic_xy (2, n_mics). Power is
     peak / mean of the SRP map (1 = no direction stands out). If `scan` is a list, it receives
-    the normalised SRP power over SCAN_BINS room bearings (every 5 deg, from north)."""
+    the normalised SRP power over SCAN_BINS room bearings (every 5 deg, from north). With `loudest`
+    (a share, e.g. 0.3) only that share of STFT frames with the most in-band energy is used, so an
+    intermittent source (speech with pauses) is not diluted by the frames where it is silent."""
     if mic_xy.shape[0] != 2 or mic_xy.shape[1] != block.shape[0]:
         raise ValueError(f"mic_xy must be (2, {block.shape[0]}), got {mic_xy.shape}")
     hi = min(band[1], 0.45 * fs)
     stft = np.stack([pra.transform.stft.analysis(ch, NFFT, NFFT // 2).T for ch in block])
+    if loudest is not None and 0 < loudest < 1:
+        f = np.fft.rfftfreq(NFFT, 1.0 / fs)
+        energy = (np.abs(stft[:, (f >= band[0]) & (f <= hi), :]) ** 2).sum(axis=(0, 1))
+        k = max(4, round(loudest * stft.shape[2]))
+        stft = stft[:, :, np.sort(np.argsort(energy)[-k:])]
     doa = pra.doa.algorithms["SRP"](mic_xy, fs, NFFT, c=C, num_src=1)
     doa.locate_sources(stft, freq_range=[band[0], hi])
     grid = np.asarray(doa.grid.values, dtype=float)

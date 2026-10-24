@@ -143,10 +143,11 @@ function draw() {
   // the SRP scan: wedges that light up toward the sound, and its outline
   for (const a of cfg.arrays) {
     const o = arr[a.name]; if (!o || !o.scan || !o.scan.length) continue;
-    const n = o.scan.length, step = 360 / n, c = o.clear ? lc : "#7d8590";
+    const on = o.clear && st.clear;
+    const n = o.scan.length, step = 360 / n, c = on ? lc : "#7d8590";
     const lo = Math.min(...o.scan), hi = Math.max(...o.scan), sc = o.scan.map(v => (v - lo) / Math.max(hi - lo, 1e-6));
     for (let i = 0; i < n; i++) {
-      const v4 = Math.pow(sc[i], 3) * (o.clear ? 0.6 : 0.2);
+      const v4 = Math.pow(sc[i], 3) * (on ? 0.6 : 0.2);
       if (v4 < 0.01) continue;
       const b0 = i * step, b1 = b0 + step;
       ctx.globalAlpha = v4; ctx.fillStyle = c; ctx.beginPath(); ctx.moveTo(X(a.x), Y(a.y));
@@ -176,11 +177,11 @@ function draw() {
 
   // current bearing rays
   for (const a of cfg.arrays) {
-    const o = arr[a.name]; if (!o) continue; const [dx, dy] = dir(o.bearing);
-    ctx.strokeStyle = o.clear ? lc : "#484f58"; ctx.lineWidth = o.clear ? 5 : 2;
-    ctx.setLineDash(o.clear ? [] : [8, 8]); ctx.beginPath(); ctx.moveTo(X(a.x), Y(a.y));
+    const o = arr[a.name]; if (!o) continue; const [dx, dy] = dir(o.bearing), on = o.clear && st.clear;
+    ctx.strokeStyle = on ? lc : "#484f58"; ctx.lineWidth = on ? 5 : 2;
+    ctx.setLineDash(on ? [] : [8, 8]); ctx.beginPath(); ctx.moveTo(X(a.x), Y(a.y));
     ctx.lineTo(X(a.x + dx * R), Y(a.y + dy * R)); ctx.stroke(); ctx.setLineDash([]);
-    if (o.clear && !st.fix) {  // one array: a marker on the ray where the label sits
+    if (on && !st.fix) {  // one array: a marker on the ray where the label sits
       ctx.fillStyle = lc; ctx.beginPath(); ctx.arc(X(a.x + dx * R * 0.8), Y(a.y + dy * R * 0.8), 13, 0, 2 * Math.PI); ctx.fill();
     }
   }
@@ -219,7 +220,7 @@ function hud() {
   if (st.fix) lines.push(`fix (${st.fix.x.toFixed(2)}, ${st.fix.y.toFixed(2)}) m ± ${st.fix.sigma.toFixed(2)}`);
   document.getElementById("status").innerHTML = lines.join("<br>");
   document.getElementById("foot").textContent = `classifier: ${cfg.classifier} · audio: ${cfg.audio}` +
-    ` · class shown when clarity ≥ ${cfg.gate} and ≥ ${Math.round(100 * cfg.min_prob)} % sure · direction over ${cfg.doa_s} s`;
+    ` · class shown when clarity ≥ ${cfg.gate} (loudest ${Math.round(100 * cfg.loudest)} % of frames), not quiet, and ≥ ${Math.round(100 * cfg.min_prob)} % sure · direction over ${cfg.doa_s} s`;
   const stale = Date.now() - lastOk > 4000;
   document.getElementById("banner").textContent = st.done ? "end of recording" : (stale && lastOk ? "no data from the audio loop" : "");
 }
@@ -246,7 +247,9 @@ def add_parser(sub, live) -> None:
     p.add_argument("--port", type=int, default=8765)
     p.add_argument("--mix", action="store_true", help="classify the mic mean instead of a beam toward the bearing")
     p.add_argument("--doa-s", type=float, default=2.0, help="seconds of audio per direction estimate (steadier when longer)")
-    p.add_argument("--gate", type=float, default=None, help="SRP clarity needed to show a class (default 1.3)")
+    p.add_argument("--gate", type=float, default=None, help="SRP clarity needed to show a class (default 1.2)")
+    p.add_argument("--loudest", type=float, default=0.3,
+                   help="share of the loudest frames the direction is computed on (1 = all frames)")
     p.add_argument("--min-prob", type=float, default=None, help="smoothed class probability needed to show it (default 0.6)")
     p.add_argument("--fast", action="store_true", help="replay as fast as possible instead of in real time")
     p.add_argument("--no-browser", action="store_true", help="only print the URL")
@@ -283,7 +286,7 @@ def cmd_live(a) -> None:
                    for arr in s.arrays],
         "radius": a.radius, "classifier": clf.name + (f" ({reason})" if reason else ""),
         "audio": "mic mean" if a.mix else "beam toward the bearing", "source": source,
-        "gate": a.gate or GATE, "min_prob": a.min_prob or MIN_PROB, "doa_s": a.doa_s,
+        "gate": a.gate or GATE, "min_prob": a.min_prob or MIN_PROB, "doa_s": a.doa_s, "loudest": a.loudest,
     }, port=a.port)
     print(f"live map: {server.url}  ({source}, {len(s.arrays)} array(s), classifier {clf.name}). Ctrl-C to stop.")
     if not a.no_browser:
@@ -303,7 +306,7 @@ def cmd_live(a) -> None:
                 history[arr.name].append(m[arr.name])
                 scan: list = []  # direction from the last doa_s seconds, class from the newest second
                 b, p = estimate_bearing(np.concatenate(history[arr.name], axis=1), arr.profile.fs,
-                                        arr.profile.mic_xy, arr.pose.rotation_deg, scan=scan)
+                                        arr.profile.mic_xy, arr.pose.rotation_deg, scan=scan, loudest=a.loudest)
                 level = 20 * np.log10(max(float(np.sqrt(np.mean(np.square(m[arr.name])))), 1e-12))
                 obs[arr.name] = Obs(b, p, tuple(scan), level, gate)
             arr = max(s.arrays, key=lambda x: obs[x.name].level_db)  # classify the loudest array

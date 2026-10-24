@@ -55,5 +55,13 @@ def test_unsure_top_class_is_not_shown():
 
 
 def test_gate_is_adjustable_per_observation():
-    assert not Obs(0.0, 1.25).clear
-    assert Obs(0.0, 1.25, gate=1.2).clear
+    assert not Obs(0.0, 1.15).clear
+    assert Obs(0.0, 1.15, gate=1.1).clear
+
+
+def test_quiet_never_counts_even_with_a_clear_direction():
+    tr = Tracker({"A": Pose(0, 0, 0)})
+    s = tr.update(0, {"A": Obs(180.0, 2.0)}, {"quiet": 0.9, "drone": 0.1})  # a directional fan
+    assert s.label == NONE and s.why == "quiet" and not s.clear and s.trail == []
+    s = tr.update(1, {"A": Obs(10.0, 1.6)}, DRONE)
+    assert s.label == "drone"
