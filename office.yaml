@@ -32,8 +32,7 @@ labels:
 # image_origin_px: [31, 968]
 arrays:  # name: [x, y]; rotation_deg comes from setup.yaml (0 = the array's forward axis points north, up)
   # Oct 24, measured: both on the arrays table, pointing west into the room (rotation_deg 270 in the
-  # setup), centres 1.80 m apart around the middle of the two red marks; facing west, A is on the right.
-  A: [16.05, 9.03]  # north: UMA-16
-  B: [16.05, 7.23]  # south: reSpeaker Flex XVF3800 (or the second UMA-16)
-  # Bearings from 1.1 m apart barely cross beyond a few metres. Wider is much better, e.g. the two
-  # table ends (4.2 m):  A: [16.08, 10.6]   B: [16.08, 6.4]
+  # setup), centres 8'11" = 2.72 m apart; B 30" = 0.76 m north of the table's south end (y 5.98).
+  # Facing west, A is on the right.
+  A: [16.05, 9.46]  # north: UMA-16
+  B: [16.05, 6.74]  # south: reSpeaker Flex XVF3800 (or the second UMA-16)
