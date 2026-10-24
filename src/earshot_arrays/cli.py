@@ -76,6 +76,28 @@ def cmd_meter(a) -> None:
         src.close()
 
 
+def cmd_map(a) -> None:
+    import re
+
+    from earshot_arrays.meter import map_channels
+
+    prof = load_profile(a.profile)
+    src = DeviceSource(a.device, prof, block_s=0.1)
+    n = len(prof.mic_channels)
+    print(f"{prof.name}: tap each mic position 0..{n - 1} once, firmly, with a fingernail. Ctrl-C aborts.")
+    try:
+        chans = map_channels(src, n)
+    except KeyboardInterrupt:
+        print("\naborted, profile unchanged")
+        return
+    finally:
+        src.close()
+    text = Path(a.profile).read_text()
+    new = re.sub(r"^mic_channels:.*$", f"mic_channels: {chans}", text, count=1, flags=re.MULTILINE)
+    Path(a.profile).write_text(new)
+    print(f"mic_channels: {chans}\nwritten to {a.profile}")
+
+
 def cmd_bearing(a) -> None:
     from earshot_arrays.doa import estimate_bearing
 
@@ -271,6 +293,10 @@ def main() -> None:
     sub.add_parser("list", help="audio inputs with 2+ channels").set_defaults(fn=cmd_list)
     one_array(sub.add_parser("meter", help="live per-channel levels (find the channel order)")).set_defaults(
         fn=cmd_meter)
+    p = sub.add_parser("map", help="tap mics 0..n-1 in turn; writes the channel order into the profile")
+    p.add_argument("--profile", required=True)
+    p.add_argument("--device", required=True, help="device index or name substring")
+    p.set_defaults(fn=cmd_map)
     one_array(sub.add_parser("bearing", help="live bearing of one array")).set_defaults(fn=cmd_bearing)
 
     p = live(sub.add_parser("locate", help="two arrays → position + class, live plot"))

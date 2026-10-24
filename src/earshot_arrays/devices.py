@@ -67,6 +67,11 @@ class DeviceSource:
             block = self._q.get_nowait()
         return block
 
+    def drain(self) -> None:
+        """Drop everything queued so far."""
+        while not self._q.empty():
+            self._q.get_nowait()
+
     def close(self) -> None:
         self._stream.stop()
         self._stream.close()
