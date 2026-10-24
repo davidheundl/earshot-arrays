@@ -6,8 +6,8 @@
 # Checked on our board (Oct 24) with room noise: inter-mic coherence falls with distance for this
 # layout (r = -0.67), not for a row-by-row grid (r = -0.01).
 #
-# Still to check with a clap: mirror. Coherence cannot tell the board's two faces apart. If a clap
-# from the east reads ~270 instead of ~90, the layout is mirrored: flip the sign of every x.
+# Mirror checked (Oct 24, board flat, components up): a phone from the north read ~354, from the
+# east ~90, so the layout is not mirrored. If a board is mounted face down, flip the sign of every x.
 # Front (+y) is Acoular's +y; which board edge that is gets absorbed by rotation_deg in the setup.
 # 42 mm pitch: spatial aliasing starts near 4 kHz, which the default 500-4000 Hz band stays under.
 name: miniDSP UMA-16
