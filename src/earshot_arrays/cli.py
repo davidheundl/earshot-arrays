@@ -106,11 +106,12 @@ def cmd_locate(a) -> None:
     classify = load_classifier()
     plot = None if a.no_plot else LivePlot(s, show=not a.save_plot)
     print(f"classifier: {classify.name}")
-    t = 0
+    t, ended = 0, False
     try:
         while True:
             blocks = [src.read(latest=True) for src in sources]
             if any(b is None for b in blocks):
+                ended = True
                 break
             rays = []
             for arr, block in zip(s.arrays, blocks):
@@ -138,6 +139,9 @@ def cmd_locate(a) -> None:
         if plot and a.save_plot:
             plot.save(a.save_plot)
             print(f"plot saved to {a.save_plot}")
+    if plot and plot.show and ended:  # end of a replay: keep the last frame up until the window is closed
+        print("end of recording; close the plot window to exit")
+        plot.hold()
 
 
 class LivePlot:
@@ -204,6 +208,10 @@ class LivePlot:
         if self.show:
             self.fig.canvas.draw_idle()
             self.plt.pause(0.01)
+
+    def hold(self) -> None:
+        self.plt.ioff()
+        self.plt.show()
 
     def save(self, path: str) -> None:
         self.fig.savefig(path, dpi=120, bbox_inches="tight")
