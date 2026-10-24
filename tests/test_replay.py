@@ -62,3 +62,10 @@ def test_loaded_classifier_never_raises():
         r = clf(x.astype(np.float32), 48000)
         assert set(r.probs) == set(CLASSES)
         assert sum(r.probs.values()) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_train_label_of_recording_dir():
+    from earshot_arrays.train import label_of
+
+    assert label_of("drone12") == "drone"
+    assert label_of("quiet1") == "quiet"

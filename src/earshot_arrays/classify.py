@@ -16,14 +16,17 @@ from pathlib import Path
 
 import numpy as np
 
-CLASSES = ("drone", "plane", "car", "fan", "other")
-# head's fine class -> shown class; speech, music and animals are in the head's "other"
+CLASSES = ("drone", "plane", "car", "person", "fan", "other")
+# head's fine class -> shown class (earshot's sound head, and the labels of a room head from
+# `arrays train`); anything else counts as "other"
 FOLD = {"drone": "drone", "plane": "plane", "helicopter": "plane", "vehicle": "car", "train": "car",
-        "machine": "fan", "insect": "other", "ambient": "other", "other": "other"}
+        "car": "car", "speech": "person", "person": "person", "machine": "fan", "fan": "fan",
+        "insect": "other", "ambient": "other", "quiet": "other", "music": "other", "other": "other"}
 
 MODELS = Path(__file__).resolve().parents[2] / "data" / "models"
 BACKBONE = MODELS / "mn10_as_mAP_471.pt"
 HEAD = MODELS / "sound_head.pt"
+ROOM_HEAD = MODELS / "room_head.pt"  # from `arrays train`; used instead of HEAD when present
 INPUT_RMS = 0.05  # the net wants ordinary audio levels
 # The AudioSet models were trained on 10 s clips: on 1 s their logits blow up (edge effects
 # dominate the pooled features). Tiling the window to CONTEXT_S brings them back in range.
@@ -67,11 +70,11 @@ class StandIn:
         mid = spec[(f >= 100) & (f < 4000)]
         tonal = mid.max() / max(mid.mean(), 1e-12) if mid.size else 0.0
         if tonal > 30:
-            p = [0.6, 0.1, 0.05, 0.15, 0.1]
+            p = [0.6, 0.1, 0.05, 0.05, 0.1, 0.1]
         elif low > 0.6:
-            p = [0.1, 0.4, 0.4, 0.05, 0.05]
+            p = [0.1, 0.4, 0.4, 0.0, 0.05, 0.05]
         else:
-            p = [0.2] * 5
+            p = [1 / 6] * 6
         return dict(zip(CLASSES, p))
 
 
@@ -114,20 +117,17 @@ class Backbone:
 class EfficientAT:
     """Frozen EfficientAT features -> the trained head's fine classes -> CLASSES."""
 
-    name = "EfficientAT"
-
-    def __init__(self, backbone: Path = BACKBONE, head: Path = HEAD):
+    def __init__(self, backbone: Path = BACKBONE, head: Path | None = None):
         import torch
         from torch import nn
 
+        head = head or (ROOM_HEAD if ROOM_HEAD.exists() else HEAD)
+        self.name = f"EfficientAT + {head.stem}"
         for p in (backbone, head):
             if not p.exists():
                 raise FileNotFoundError(f"{p} missing (copy it from earshot's data/models/)")
         ck = torch.load(str(head), map_location="cpu", weights_only=False)
         self.fine_names = tuple(ck["fine"])
-        unknown = set(self.fine_names) - set(FOLD)
-        if unknown:
-            raise ValueError(f"{head}: unknown classes {sorted(unknown)}")
         self.torch = torch
         self.backbone = Backbone(backbone)
         self.mean, self.std = np.asarray(ck["mean"]), np.asarray(ck["std"])
@@ -149,7 +149,7 @@ class EfficientAT:
             return _uniform(f"{self.name}: {e}")
         probs = dict.fromkeys(CLASSES, 0.0)
         for name, p in zip(self.fine_names, fine):
-            probs[FOLD[name]] += float(p)
+            probs[FOLD.get(name, "other")] += float(p)
         return Result(probs, self.name, dict(zip(self.fine_names, fine.tolist())))
 
 

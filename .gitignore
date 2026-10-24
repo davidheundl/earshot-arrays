@@ -6,3 +6,5 @@ __pycache__/
 recordings/
 *.pt
 .DS_Store
+setup.yaml
+data/

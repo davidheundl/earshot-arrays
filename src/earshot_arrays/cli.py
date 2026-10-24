@@ -287,6 +287,17 @@ def cmd_record(a) -> None:
     print(f"{n} s written to {out}/\nreplay: uv run arrays locate --setup {out}/setup.yaml --replay {out}")
 
 
+def cmd_train(a) -> None:
+    from earshot_arrays import train
+    from earshot_arrays.classify import ROOM_HEAD
+
+    extra = []
+    for e in a.extra or []:
+        label, _, path = e.partition("=")
+        extra.append((label, Path(path)))
+    train.run(Path(a.recordings), Path(a.out) if a.out else ROOM_HEAD, extra)
+
+
 def cmd_synth(a) -> None:
     from earshot_arrays.synth import synth_session
 
@@ -336,6 +347,12 @@ def main() -> None:
     p.add_argument("--seconds", type=float, default=30.0)
     p.add_argument("--out", help="directory (default recordings/<timestamp>)")
     p.set_defaults(fn=cmd_record, replay=None, realtime=False)
+
+    p = sub.add_parser("train", help="train the room head on recordings/<label><n>/ (EfficientAT stays frozen)")
+    p.add_argument("--recordings", default="recordings")
+    p.add_argument("--extra", nargs="*", metavar="LABEL=WAV", help="more clips, e.g. drone=clean.wav")
+    p.add_argument("--out", help="default data/models/room_head.pt")
+    p.set_defaults(fn=cmd_train)
 
     p = sub.add_parser("synth", help="write a synthetic two-array session (rehearsal without hardware)")
     p.add_argument("--setup", default="setup.example.yaml")
