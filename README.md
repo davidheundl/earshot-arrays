@@ -12,6 +12,8 @@ uv run arrays locate                  # live plot
 uv run arrays record --seconds 30     # → recordings/<timestamp>/, replays with --replay
 
 uv run arrays classify --profile profiles/uma16.yaml --device UMA16   # live class + bearing
+uv run arrays live                    # live map in the browser: direction, 360° scan, class (+ fix with 2 arrays)
+uv run arrays live --replay recordings/demo_room1   # rehearse the map on a recording (real time; --fast)
 # classifier weights (not in git): copy mn10_as_mAP_471.pt and sound_head.pt from earshot's data/models/ to data/models/
 
 # rehearse without hardware

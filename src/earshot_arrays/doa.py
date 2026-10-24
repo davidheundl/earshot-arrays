@@ -9,6 +9,8 @@ clockwise from the room's north; `rotation_deg` is the room bearing of the array
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pyroomacoustics as pra
 
@@ -52,3 +54,16 @@ def angle_diff(a: float, b: float) -> float:
     """Signed smallest difference a - b in degrees, in (-180, 180]."""
     d = (a - b) % 360.0
     return d - 360.0 if d > 180.0 else d
+
+
+def beam(block: np.ndarray, fs: int, mic_xy: np.ndarray, bearing_deg: float, rotation_deg: float = 0.0) -> np.ndarray:
+    """Far-field delay-and-sum toward a room bearing: (n_mics, n) -> (n,), the mean of the aligned mics.
+
+    Sound from that bearing adds up in phase; sound from elsewhere (room noise, other talkers) partly
+    cancels, so the beam has a better signal-to-noise ratio than the plain mic mean."""
+    rel = math.radians(bearing_deg - rotation_deg)  # bearing in the array frame, clockwise from +y
+    u = np.array([math.sin(rel), math.cos(rel)])
+    lead = (u @ mic_xy) / C  # seconds each mic hears the wavefront before the array centre
+    spec = np.fft.rfft(block, axis=1)
+    f = np.fft.rfftfreq(block.shape[1], 1.0 / fs)
+    return np.fft.irfft((spec * np.exp(-2j * np.pi * f[None] * lead[:, None])).mean(axis=0), block.shape[1])

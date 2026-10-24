@@ -342,6 +342,9 @@ def main() -> None:
     p.add_argument("--save-plot", metavar="PNG", help="no window; save the last frame here")
     p.set_defaults(fn=cmd_locate)
 
+    from earshot_arrays.livemap import add_parser as add_live_map
+    add_live_map(sub, live)
+
     p = sub.add_parser("record", help="record both arrays for later --replay")
     p.add_argument("--setup", default="setup.yaml")
     p.add_argument("--seconds", type=float, default=30.0)
