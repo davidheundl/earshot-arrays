@@ -62,12 +62,14 @@ def test_twin_renders_hot_cell_in_place(tmp_path):
     p[iy, ix] = 1.0
     cls = Result({"drone": 0.8, "plane": 0.2}, "stand-in")
     plot.update(p, [(30.0, 2.0), None], Estimate(3.75, 3.75, 1.0, 0.4, 0.9), cls, 3.0)
-    coords = plot.mesh.get_coordinates()  # (ny + 1, nx + 1, 2) cell corners
-    assert coords.shape == (grid.ny + 1, grid.nx + 1, 2)
-    assert tuple(coords[iy, ix]) == pytest.approx((-1.0 + ix * 0.5, 2.0 + iy * 0.5))
-    assert tuple(coords[iy + 1, ix + 1]) == pytest.approx((-1.0 + (ix + 1) * 0.5, 2.0 + (iy + 1) * 0.5))
-    drawn = np.asarray(plot.mesh.get_array()).reshape(grid.ny, grid.nx)
-    assert np.unravel_index(drawn.argmax(), drawn.shape) == (iy, ix)
+    assert plot.heat.get_extent() == pytest.approx([-1.0, -1.0 + grid.nx * 0.5, 2.0, 2.0 + grid.ny * 0.5])
+    drawn = np.asarray(plot.heat.get_array())  # (ny, nx, 4), row 0 south (origin lower)
+    assert drawn.shape == (grid.ny, grid.nx, 4)
+    assert np.unravel_index(drawn[..., 3].argmax(), drawn.shape[:2]) == (iy, ix)
+    from matplotlib.colors import to_rgb
+
+    from earshot_arrays.twin import COLORS
+    assert tuple(drawn[iy, ix, :3]) == pytest.approx(to_rgb(COLORS["drone"]))  # the class colour
     assert plot.label.get_text() == "DRONE  80%"
     plot.update(p * 0, [None, None], None, None, 4.0)  # one array or none, no estimate, no class
     assert "no clear direction" in plot.sub.get_text()
@@ -84,7 +86,7 @@ def test_twin_hides_estimate_without_position_and_keeps_flat_belief_pale():
     plot = TwinPlot(o, [("A", Pose(3.0, 0.5, 0.0))], grid, show=False)
     flat = np.full((grid.ny, grid.nx), 1.0 / (grid.nx * grid.ny))
     plot.update(flat, [(10.0, 1.1)], Estimate(0.25, 0.25, flat.max(), 2.5, 0.05), None, 0.0)  # silence
-    assert plot.mesh.get_clim()[1] > 5 * flat.max()
+    assert np.asarray(plot.heat.get_array())[..., 3].max() == 0.0  # a flat belief stays dark
     assert not plot.where.get_visible() and not plot.blob.get_visible()
     plot.update(flat, [(10.0, 2.0)], Estimate(3.25, 3.25, flat.max(), 2.5, 0.1), None, 1.0)  # a streak
     assert not plot.where.get_visible()

@@ -1,9 +1,11 @@
 """2D digital twin of the office: floor plan, arrays and their rays, the probability grid, the estimate.
 
     plot = TwinPlot(office, [(name, pose), ...], grid)
-    plot.update(p, rays, estimate, cls, t)   # once per block; p is (ny, nx), p[iy, ix], iy north, ix east
+    plot.update(p, rays, estimate, cls, t, scans)   # once per block; p is (ny, nx), p[iy, ix], iy north
 
-Built once, then only artist data changes per update, so 1 update/s with a ~30 x 20 grid is cheap.
+Looks like the browser live map (`arrays live`): dark, the probability map and the rays in the colour of
+the class, light wedges toward the sound from each array's SRP scan, a dashed circle around the most
+likely cell. Built once, then only artist data changes per update, so 1 update/s is cheap.
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from earshot_arrays.config import Pose
+from earshot_arrays.doa import SCAN_BINS
 from earshot_arrays.locate import direction
 from earshot_arrays.office import Office
 
@@ -24,29 +27,37 @@ MIN_POWER = 1.3  # as cli.MIN_POWER: a direction stands out
 MARGIN = 0.8  # metres around the bounds
 HUD_BAND = 1.4  # metres above the bounds for the class label and status
 FIG_W, FIG_H = 11.0, 8.5  # inches the figure may take at most (fits a laptop screen or a 1080p projector)
-HEAT_FLOOR = 8.0  # colour scale tops out at least at this many times the uniform share: a flat belief stays pale
 MIN_MASS_NEAR = 0.3  # the estimate is drawn only if this much mass lies within belief.NEAR_M of it
 
-SURROUND = "#dcd8d0"
-FLOOR = "#fbfaf6"
-WALL = "#3b3b3b"
-ARRAY = "#1f5fa8"
-HOT = "#c62828"
+SCAN_R = 5.0  # metres the scan wedges reach from an array
+# the live map's palette (livemap.PAGE)
+SURROUND = "#0d1117"
+FLOOR = "#161b22"
+WALL = "#7d8590"
+ARRAY = "#e6edf3"
+FG, DIM = "#e6edf3", "#7d8590"
+GREY = "#484f58"
+COLORS = {"drone": "#ff4d4f", "plane": "#4ea1ff", "person": "#3fb950", "speech": "#3fb950", "music": "#bc8cff",
+          "car": "#ff9f43", "fan": "#39c5cf", "quiet": "#7d8590", "other": "#7d8590"}
 AREA_STYLE = {  # kind -> (face, edge)
-    "room": ("#f3f1ec", "#b9b4aa"),
-    "furniture": ("#ece5d8", "#9c907e"),
-    "glass": ("#e3eff8", "#86acc9"),
+    "room": ("#1b2027", "#30363d"),
+    "furniture": ("#21262d", "#3d444d"),
+    "glass": ("#16263a", "#2f5a85"),
 }
 
 
-def heat_cmap(n: int = 256):
-    """Warm sequential map, transparent at zero and opaque at the top."""
-    from matplotlib import colormaps
-    from matplotlib.colors import ListedColormap
+def colour(label: str | None) -> str:
+    return COLORS.get(label or "", "#c9d1d9")
 
-    rgba = colormaps["YlOrRd"](np.linspace(0.15, 1.0, n))
-    rgba[:, 3] = np.linspace(0.0, 1.0, n) ** 0.6 * 0.85
-    return ListedColormap(rgba, name="earshot_heat").with_extremes(bad=(0, 0, 0, 0))
+
+def heat_rgba(p: np.ndarray, rgb: tuple[float, float, float], fade: float) -> np.ndarray:
+    """(ny, nx, 4): every cell in the class colour, alpha as on the live map (share of the top cell^1.5)."""
+    q = p / max(float(p.max()), 1e-300)
+    out = np.empty(p.shape + (4,))
+    out[..., :3] = rgb
+    a = q**1.5 * 0.7 * fade
+    out[..., 3] = np.where(a < 0.02, 0.0, a)
+    return out
 
 
 class TwinPlot:
@@ -91,62 +102,75 @@ class TwinPlot:
         self.xe = grid.x0 + grid.cell * np.arange(grid.nx + 1)
         self.ye = grid.y0 + grid.cell * np.arange(grid.ny + 1)
         self.off_floor = None if grid.mask is None else ~np.asarray(grid.mask, dtype=bool)
-        self.mesh = ax.pcolormesh(self.xe, self.ye, self._masked(np.zeros((grid.ny, grid.nx))), shading="flat",
-                                  cmap=heat_cmap(), vmin=0.0, vmax=1.0, edgecolors="none", zorder=2)
-        self.mesh.set_clip_path(floor_patch)
-        edges = ax.add_collection(LineCollection(self._cell_edges(), colors=[(0, 0, 0, 0.13)], linewidths=0.4,
+        self.heat = ax.imshow(np.zeros((grid.ny, grid.nx, 4)), origin="lower", interpolation="nearest",
+                              extent=(self.xe[0], self.xe[-1], self.ye[0], self.ye[-1]), zorder=2.2)
+        self.heat.set_clip_path(floor_patch)
+        edges = ax.add_collection(LineCollection(self._cell_edges(), colors=[(1, 1, 1, 0.05)], linewidths=0.4,
                                                  zorder=2.1))
         edges.set_clip_path(floor_patch)
-        n_floor = int(np.count_nonzero(grid.mask)) if grid.mask is not None else grid.nx * grid.ny
-        self.vmax_floor = HEAT_FLOOR / max(n_floor, 1)
+        self.n_floor = int(np.count_nonzero(grid.mask)) if grid.mask is not None else grid.nx * grid.ny
 
         if vectors and office.walls:
             ax.add_collection(LineCollection(office.walls, colors=WALL, linewidths=4.5, capstyle="projecting",
                                              joinstyle="miter", zorder=5))
 
+        from matplotlib.collections import PolyCollection
+
         self.reach = 2.0 * math.hypot(xmax - xmin, ymax - ymin)
-        self.rays = []
+        self.rays, self.wedges, self.outlines = [], [], []
         clip = Rectangle((xmin, ymin), xmax - xmin, ymax - ymin, transform=ax.transData)  # rays stop at the bounds
+        step = 360.0 / SCAN_BINS
         for name, pose in arrays:
-            (line,) = ax.plot([], [], ls=(0, (6, 4)), color=ARRAY, lw=1.6, zorder=3)
+            polys = []
+            for i in range(SCAN_BINS):  # one wedge per scan bin, as the live map draws them
+                arc = [direction(i * step + k * step / 4) for k in range(5)]
+                polys.append([(pose.x, pose.y)] + [(pose.x + SCAN_R * dx, pose.y + SCAN_R * dy) for dx, dy in arc])
+            wedges = ax.add_collection(PolyCollection(polys, facecolors=[(0, 0, 0, 0)] * SCAN_BINS,
+                                                      edgecolors="none", zorder=2.5))
+            wedges.set_clip_path(floor_patch)
+            self.wedges.append(wedges)
+            (outline,) = ax.plot([], [], color=GREY, lw=1.5, alpha=0.9, zorder=3.5)
+            self.outlines.append(outline)
+            (line,) = ax.plot([], [], ls=(0, (6, 6)), color=GREY, lw=1.6, zorder=4)
             line.set_clip_path(clip)
             self.rays.append(line)
-            ax.plot(pose.x, pose.y, "s", ms=11, color=ARRAY, mec="white", mew=1.5, zorder=8)
+            ax.plot(pose.x, pose.y, "s", ms=11, color=ARRAY, mec=SURROUND, mew=1.5, zorder=8)
             fx, fy = direction(pose.rotation_deg)
             ax.annotate("", (pose.x + 0.7 * fx, pose.y + 0.7 * fy), (pose.x, pose.y), zorder=8,
                         arrowprops={"arrowstyle": "-|>", "color": ARRAY, "lw": 1.5, "shrinkA": 6, "shrinkB": 0})
             ax.text(pose.x + 0.25, pose.y - 0.25, name, ha="left", va="top", fontsize=11, weight="bold",
                     color=ARRAY, zorder=8)
 
-        self.blob = Circle((0, 0), 0.0, facecolor=HOT, edgecolor=HOT, alpha=0.15, lw=1, visible=False, zorder=6)
+        # most likely cell: dashed circle holding half the probability, and a crosshair (as the live map)
+        self.blob = Circle((0, 0), 0.0, facecolor="none", edgecolor=FG, ls=(0, (4, 4)), lw=1.8, visible=False,
+                           zorder=9)
         ax.add_patch(self.blob)
-        (self.ring,) = ax.plot([], [], "o", ms=18, mfc="none", mec=HOT, mew=2.8, zorder=9)
-        (self.dot,) = ax.plot([], [], "o", ms=4, color=HOT, zorder=9)
-        self.where = ax.text(0, 0, "", fontsize=9, color=HOT, weight="bold", zorder=9, visible=False,
-                             bbox={"boxstyle": "round,pad=0.25", "fc": "white", "ec": "none", "alpha": 0.8})
+        (self.dot,) = ax.plot([], [], "+", ms=16, mew=2, color=FG, zorder=9)
+        self.where = ax.text(0, 0, "", fontsize=9, color=FG, weight="bold", zorder=9, visible=False,
+                             bbox={"boxstyle": "round,pad=0.25", "fc": SURROUND, "ec": "none", "alpha": 0.8})
 
         top = ymax + MARGIN + HUD_BAND  # HUD in a band above the plan, so it never hides the floor
         hud = {"va": "top", "ha": "left", "zorder": 10}
         self.label = ax.text(xmin, top - 0.1, "", fontsize=20, weight="bold", **hud)
-        self.sub = ax.text(xmin, top - 0.8, "", fontsize=9, color="0.35", linespacing=1.5, **hud)
+        self.sub = ax.text(xmin, top - 0.8, "", fontsize=9, color=DIM, linespacing=1.5, **hud)
 
         # north arrow (top right, in the HUD band) and a 1 m scale bar in the bottom margin
         ax.annotate("N", (xmax, top - 0.2), (xmax, top - 1.2), ha="center", va="top",
-                    fontsize=11, weight="bold", color="0.25", zorder=10,
-                    arrowprops={"arrowstyle": "-|>", "color": "0.25", "lw": 1.8})
+                    fontsize=11, weight="bold", color=FG, zorder=10,
+                    arrowprops={"arrowstyle": "-|>", "color": FG, "lw": 1.8})
         sy = ymin - 0.45 * MARGIN
-        ax.add_patch(Rectangle((xmax - 1.0, sy - 0.04), 1.0, 0.08, color="0.25", zorder=10, clip_on=False))
-        ax.text(xmax - 0.5, sy - 0.1, "1 m", ha="center", va="top", fontsize=8, color="0.25")
+        ax.add_patch(Rectangle((xmax - 1.0, sy - 0.04), 1.0, 0.08, color=DIM, zorder=10, clip_on=False))
+        ax.text(xmax - 0.5, sy - 0.1, "1 m", ha="center", va="top", fontsize=8, color=DIM)
 
         ax.set_xlim(xmin - MARGIN, xmax + MARGIN)
         ax.set_ylim(ymin - MARGIN, top)
         ax.set_aspect("equal")
         ax.set_xticks(np.arange(math.ceil(xmin), math.floor(xmax) + 1, 2))
         ax.set_yticks(np.arange(math.ceil(ymin), math.floor(ymax) + 1, 2))
-        ax.tick_params(colors="0.6", labelsize=7, length=2)
+        ax.tick_params(colors=GREY, labelsize=7, length=2)
         for sp in ax.spines.values():
             sp.set_visible(False)
-        ax.set_title(office.name, fontsize=13, color="0.2", loc="left", weight="bold")
+        ax.set_title(office.name, fontsize=13, color=FG, loc="left", weight="bold")
         self.fig.tight_layout()
 
     def _cell_edges(self) -> list:
@@ -163,32 +187,52 @@ class TwinPlot:
                 segs.append(((self.xe[i], self.ye[j]), (self.xe[i], self.ye[j + 1])))
         return segs
 
-    def _masked(self, p: np.ndarray):
-        return np.ma.masked_array(p, mask=self.off_floor) if self.off_floor is not None else p
+    def update(self, p: np.ndarray, rays, estimate: Estimate | None, cls, t: float, scans=None) -> None:
+        from matplotlib.colors import to_rgb
 
-    def update(self, p: np.ndarray, rays, estimate: Estimate | None, cls, t: float) -> None:
         p = np.asarray(p, dtype=float)
-        self.mesh.set_array(self._masked(p))
-        self.mesh.set_clim(0.0, max(float(p.max()), self.vmax_floor))
+        label = None if cls is None else cls.label
+        lc = colour(label)
+        strong = any(ray is not None and ray[1] >= MIN_POWER for ray in rays)
+        # a flat map stays dark: fade in once the top cell holds well over the uniform share (as the live map)
+        concentration = float(p.max()) * self.n_floor
+        fade = min(1.0, max(0.0, (concentration - 2.0) / 15.0))
+        self.heat.set_data(heat_rgba(p, to_rgb(lc), fade))
 
-        strong = False
-        for line, (_, pose), ray in zip(self.rays, self.arrays, rays):
+        for i, ((_, pose), ray) in enumerate(zip(self.arrays, rays)):
+            line, wedges, outline = self.rays[i], self.wedges[i], self.outlines[i]
             if ray is None:
                 line.set_data([], [])
                 continue
             b, power = ray
+            on = power >= MIN_POWER
+            c = lc if on else GREY
             dx, dy = direction(b)
             line.set_data([pose.x, pose.x + self.reach * dx], [pose.y, pose.y + self.reach * dy])
-            line.set_alpha(1.0 if power >= MIN_POWER else 0.25)
-            strong |= power >= MIN_POWER
+            line.set_color(c)
+            line.set_linewidth(4.0 if on else 1.6)
+            line.set_linestyle("-" if on else (0, (6, 6)))
+            scan = None if scans is None else scans[i]
+            if scan is None or len(scan) != SCAN_BINS:
+                wedges.set_facecolors([(0, 0, 0, 0)] * SCAN_BINS)
+                outline.set_data([], [])
+                continue
+            sc = np.asarray(scan, dtype=float)
+            sc = (sc - sc.min()) / max(float(sc.max() - sc.min()), 1e-6)
+            rgb = to_rgb(c if on else DIM)
+            alpha = sc**3 * (0.6 if on else 0.2)
+            wedges.set_facecolors([(*rgb, a if a >= 0.01 else 0.0) for a in alpha])
+            ang = (np.arange(SCAN_BINS + 1) % SCAN_BINS) * (360.0 / SCAN_BINS) + 180.0 / SCAN_BINS
+            r = SCAN_R * (0.12 + 0.45 * sc[np.arange(SCAN_BINS + 1) % SCAN_BINS])
+            outline.set_data(pose.x + r * np.sin(np.radians(ang)), pose.y + r * np.cos(np.radians(ang)))
+            outline.set_color(c)
 
         # a streak (one array, near-parallel rays) or a flat belief has an argmax, but no position to show
         shown = estimate is not None and strong and estimate.mass_near >= MIN_MASS_NEAR
         if shown:
-            self.ring.set_data([estimate.x], [estimate.y])
             self.dot.set_data([estimate.x], [estimate.y])
             self.blob.set_center((estimate.x, estimate.y))
-            self.blob.set_radius(estimate.r50)
+            self.blob.set_radius(max(estimate.r50, 0.3))
             self.blob.set_visible(True)
             xmin, ymin, xmax, ymax = self.office.bounds
             east = estimate.x > xmin + 2 / 3 * (xmax - xmin)  # label left of the ring, so it stays in the figure
@@ -200,7 +244,6 @@ class TwinPlot:
             self.where.set_text(f"{estimate.x:.1f}, {estimate.y:.1f} m  ±{estimate.r50:.1f}")
             self.where.set_visible(True)
         else:
-            self.ring.set_data([], [])
             self.dot.set_data([], [])
             self.blob.set_visible(False)
             self.where.set_visible(False)
@@ -208,7 +251,7 @@ class TwinPlot:
         lines = []
         if cls is not None:
             self.label.set_text(f"{cls.label.upper()}  {cls.probs[cls.label]:.0%}")
-            self.label.set_color(HOT if cls.label == "drone" else "0.2")
+            self.label.set_color(lc)
             lines.append(f"classifier: {cls.source}")
         else:
             self.label.set_text("")

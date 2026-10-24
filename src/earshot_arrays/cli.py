@@ -273,6 +273,7 @@ class Tracker:
         self.arrays, self.min_power = list(arrays), min_power  # ArraySetups, poses already in the room frame
         self.bearings = [bearing_grid(grid, arr.pose) for arr in self.arrays]  # fixed per pose: once
         self.belief = Belief(grid)
+        self.scans: list[list] = [[] for _ in self.arrays]  # last SRP scan per array, for the plot's wedges
 
     def step(self, blocks, classify=None):
         """(rays [(bearing, power)], Estimate, class Result or None) after one block from every array."""
@@ -280,9 +281,10 @@ class Tracker:
         from earshot_arrays.doa import estimate_bearing
 
         rays, obs = [], []
-        for arr, bearings, block in zip(self.arrays, self.bearings, blocks):
+        for i, (arr, bearings, block) in enumerate(zip(self.arrays, self.bearings, blocks)):
+            self.scans[i] = []
             b, p = estimate_bearing(mics(block, arr.profile), arr.profile.fs, arr.profile.mic_xy,
-                                    arr.pose.rotation_deg)
+                                    arr.pose.rotation_deg, scan=self.scans[i])
             rays.append((b, p))
             obs.append(peak_likelihood(bearings, b, p, min_power=self.min_power))
         self.belief.predict()
@@ -359,7 +361,7 @@ def cmd_twin(a) -> None:
                   + f"  est ({est.x:5.2f}, {est.y:5.2f}) m ± {est.r50:.2f} p_max {est.p_max:.3f}"
                   + f"  {cls.label} [{cls.source}]")
             if plot:
-                plot.update(tracker.belief.p, rays, est, cls, t)
+                plot.update(tracker.belief.p, rays, est, cls, t, tracker.scans)
             t += 1
     except KeyboardInterrupt:
         pass
