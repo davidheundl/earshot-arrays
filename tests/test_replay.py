@@ -69,3 +69,12 @@ def test_train_label_of_recording_dir():
 
     assert label_of("drone12") == "drone"
     assert label_of("quiet1") == "quiet"
+
+
+def test_train_names_with_distance_tag_and_non_training_dirs():
+    from earshot_arrays.train import label_of
+
+    assert label_of("drone7_3m") == "drone"
+    assert label_of("speech4_5m") == "speech"
+    assert label_of("demo_room1") is None
+    assert label_of("synthetic") is None

@@ -44,3 +44,16 @@ def test_two_clear_arrays_give_a_fix_and_trail():
     assert len(s.trail) == 2 and s.trail[-1].fix == pytest.approx((1, 2))
     js = s.to_json()
     assert js["fix"]["x"] == pytest.approx(1) and js["label"] == "drone"
+
+
+def test_unsure_top_class_is_not_shown():
+    tr = Tracker({"A": Pose(0, 0, 0)}, min_prob=0.6)
+    s = tr.update(0, {"A": Obs(10.0, 1.6)}, {"drone": 0.4, "quiet": 0.35, "speech": 0.25})
+    assert s.label == NONE and s.why == "unsure" and s.raw_label == "drone"
+    s = tr.update(1, {"A": Obs(10.0, 1.6)}, {"drone": 0.95, "quiet": 0.05})
+    assert s.label == "drone" and s.why == ""
+
+
+def test_gate_is_adjustable_per_observation():
+    assert not Obs(0.0, 1.25).clear
+    assert Obs(0.0, 1.25, gate=1.2).clear

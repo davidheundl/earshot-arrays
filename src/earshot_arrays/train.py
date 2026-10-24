@@ -1,14 +1,15 @@
 """Train a room head: frozen EfficientAT features -> our own classes, from our own recordings.
 
-    uv run arrays train                        # recordings/<label><n>/ -> data/models/room_head.pt
+    uv run arrays train                        # recordings/<label><n>[_<tag>]/ -> data/models/room_head.pt
 
-Every recording directory named <label><n> (as `record` writes it; others such as demo_room1 are
-skipped) is labelled by its name without the trailing
-number: drone1, drone2 -> "drone"; plane1 -> "plane"; quiet1 -> "quiet". Each is cut into 1 s
-windows (0.5 s hop) of the mic mix. In a recording of a sound, windows more than LOUD_DB below the
-recording's median level are dropped (the sound had stopped). The last TEST_SHARE of every
-recording is held out to report how well the head does on audio it did not see; the saved head
-is then trained on everything.
+Every recording directory named <label><n>, optionally with a tag such as the distance
+(drone7_3m), is labelled by its leading letters: drone1, drone7_3m -> "drone"; quiet2 -> "quiet".
+Other directories (demo_room1, synthetic) are skipped. Each recording is cut into 1 s windows
+(0.5 s hop), and each window becomes the delay-and-sum beam toward the bearing measured in that
+window, as `arrays live` classifies (--mix: the plain mic mean instead). In a recording of a sound,
+windows more than LOUD_DB below the recording's median level are dropped (the sound had stopped).
+The last TEST_SHARE of every recording is held out to report how well the head does on audio it
+did not see; the saved head is then trained on everything.
 """
 
 from __future__ import annotations
@@ -28,36 +29,52 @@ HIDDEN = 128
 QUIET = "quiet"
 
 
-def label_of(name: str) -> str:
-    return re.sub(r"\d+$", "", name)
+NAME = re.compile(r"([a-z]+)\d+(_[a-z0-9]+)?")
 
 
-def windows(path: Path, channels: list[int] | None = None) -> tuple[list[np.ndarray], np.ndarray, int]:
-    """1 s mono windows of a WAV (mic channels averaged), their levels in dBFS, and the rate."""
+def label_of(name: str) -> str | None:
+    """drone7_3m -> "drone"; None for directories that are not training data."""
+    m = NAME.fullmatch(name)
+    return m.group(1) if m else None
+
+
+def windows(path: Path, profile=None, mix: bool = False) -> tuple[list[np.ndarray], np.ndarray, int]:
+    """1 s mono windows of a WAV, their levels in dBFS, and the rate. With an array profile each
+    window is the beam toward its own measured bearing (or the mic mean with mix); without one
+    (a plain clip) the channels are averaged."""
+    from earshot_arrays.doa import beam, estimate_bearing
+
     x, fs = sf.read(str(path), dtype="float32", always_2d=True)
-    mono = x[:, channels].mean(axis=1) if channels else x.mean(axis=1)
+    x = x.T[list(profile.mic_channels)] if profile else x.T
     n, h = int(WIN_S * fs), int(HOP_S * fs)
-    wins = [mono[i:i + n] for i in range(0, len(mono) - n + 1, h)]
+    wins = []
+    for i in range(0, x.shape[1] - n + 1, h):
+        m = x[:, i:i + n]
+        if profile is None or mix:
+            wins.append(m.mean(axis=0))
+        else:
+            b, _ = estimate_bearing(m, fs, profile.mic_xy)
+            wins.append(beam(m, fs, profile.mic_xy, b))
     levels = np.array([20 * np.log10(max(float(np.sqrt(np.mean(w**2))), 1e-12)) for w in wins])
     return wins, levels, fs
 
 
-def collect(recordings: Path, extra: list[tuple[str, Path]] = ()) -> list[tuple[str, str, list, int]]:
+def collect(recordings: Path, extra: list[tuple[str, Path]] = (), mix: bool = False) -> list[tuple[str, str, list, int]]:
     """(source name, label, windows, fs) per recording, with quiet tails dropped."""
     out = []
-    for d in sorted(p for p in recordings.iterdir() if p.is_dir() and re.fullmatch(r"[a-z]+\d+", p.name)):
+    for d in sorted(p for p in recordings.iterdir() if p.is_dir() and label_of(p.name)):
         if not (d / "setup.yaml").exists():
             continue  # still recording
         setup = load_setup(d / "setup.yaml")
         for arr in setup.arrays:
             wav = d / f"{arr.name}.wav"
             if wav.exists():
-                out.append((f"{d.name}/{arr.name}", label_of(d.name), wav, list(arr.profile.mic_channels)))
+                out.append((f"{d.name}/{arr.name}", label_of(d.name), wav, arr.profile))
     for label, wav in extra:
         out.append((wav.name, label, wav, None))
     result = []
-    for name, label, wav, chans in out:
-        wins, levels, fs = windows(wav, chans)
+    for name, label, wav, profile in out:
+        wins, levels, fs = windows(wav, profile, mix)
         if label != QUIET:
             keep = levels >= np.median(levels) - LOUD_DB
             wins = [w for w, k in zip(wins, keep) if k]
@@ -109,12 +126,12 @@ def confusion(y: np.ndarray, p: np.ndarray, names: list[str]) -> str:
     return "\n".join(lines)
 
 
-def run(recordings: Path, out: Path, extra: list[tuple[str, Path]] = ()) -> None:
+def run(recordings: Path, out: Path, extra: list[tuple[str, Path]] = (), mix: bool = False) -> None:
     import torch
 
     from earshot_arrays.classify import Backbone
 
-    data = collect(recordings, extra)
+    data = collect(recordings, extra, mix)
     names = sorted({label for _, label, _, _ in data})
     if len(names) < 2:
         raise SystemExit(f"need at least two labels in {recordings}, found {names}")
@@ -141,5 +158,6 @@ def run(recordings: Path, out: Path, extra: list[tuple[str, Path]] = ()) -> None
     # final head on everything
     net, mean, std = fit(X, y, len(names))
     out.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({"fine": names, "mean": mean, "std": std, "hidden": HIDDEN, "state": net.state_dict()}, out)
+    torch.save({"fine": names, "mean": mean, "std": std, "hidden": HIDDEN, "state": net.state_dict(),
+                "input": "mix" if mix else "beam"}, out)
     print(f"\nroom head ({', '.join(names)}) trained on {len(y)} windows -> {out}")

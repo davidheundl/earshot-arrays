@@ -208,7 +208,7 @@ function hud() {
   const label = st.label || "–";
   const L = document.getElementById("label"); L.textContent = label.toUpperCase(); L.style.color = col(label);
   document.getElementById("prob").textContent = st.t === undefined ? "waiting for audio…" :
-    (label === "–" ? "no clear direction" : Math.round(100 * st.prob) + " %");
+    (label === "–" ? (st.why || "no clear direction") : Math.round(100 * st.prob) + " %");
   const probs = Object.entries(st.probs || {}).sort((a, b) => b[1] - a[1]).slice(0, 5);
   document.getElementById("bars").innerHTML = probs.map(([k, p]) =>
     `<div class="bar"><span>${k}</span><div style="width:${Math.round(220 * p)}px;background:${col(k)}"></div></div>`).join("");
@@ -219,7 +219,7 @@ function hud() {
   if (st.fix) lines.push(`fix (${st.fix.x.toFixed(2)}, ${st.fix.y.toFixed(2)}) m ± ${st.fix.sigma.toFixed(2)}`);
   document.getElementById("status").innerHTML = lines.join("<br>");
   document.getElementById("foot").textContent = `classifier: ${cfg.classifier} · audio: ${cfg.audio}` +
-    ` · class shown when clarity ≥ ${cfg.gate}`;
+    ` · class shown when clarity ≥ ${cfg.gate} and ≥ ${Math.round(100 * cfg.min_prob)} % sure · direction over ${cfg.doa_s} s`;
   const stale = Date.now() - lastOk > 4000;
   document.getElementById("banner").textContent = st.done ? "end of recording" : (stale && lastOk ? "no data from the audio loop" : "");
 }
@@ -245,6 +245,9 @@ def add_parser(sub, live) -> None:
     p.add_argument("--radius", type=float, default=4.0, help="metres shown around the arrays")
     p.add_argument("--port", type=int, default=8765)
     p.add_argument("--mix", action="store_true", help="classify the mic mean instead of a beam toward the bearing")
+    p.add_argument("--doa-s", type=float, default=2.0, help="seconds of audio per direction estimate (steadier when longer)")
+    p.add_argument("--gate", type=float, default=None, help="SRP clarity needed to show a class (default 1.3)")
+    p.add_argument("--min-prob", type=float, default=None, help="smoothed class probability needed to show it (default 0.6)")
     p.add_argument("--fast", action="store_true", help="replay as fast as possible instead of in real time")
     p.add_argument("--no-browser", action="store_true", help="only print the URL")
     p.set_defaults(fn=cmd_live)
@@ -253,6 +256,7 @@ def add_parser(sub, live) -> None:
 def cmd_live(a) -> None:
     import time
     import webbrowser
+    from collections import deque
     from pathlib import Path
 
     import numpy as np
@@ -262,7 +266,7 @@ def cmd_live(a) -> None:
     from earshot_arrays.config import load_setup
     from earshot_arrays.devices import mics
     from earshot_arrays.doa import beam, estimate_bearing
-    from earshot_arrays.track import GATE, Obs, Tracker
+    from earshot_arrays.track import GATE, MIN_PROB, Obs, Tracker
 
     setup = a.setup
     if not setup and a.replay and Path(a.replay[0]).is_dir() and (Path(a.replay[0]) / "setup.yaml").exists():
@@ -278,12 +282,15 @@ def cmd_live(a) -> None:
         "arrays": [{"name": arr.name, "x": arr.pose.x, "y": arr.pose.y, "rotation": arr.pose.rotation_deg}
                    for arr in s.arrays],
         "radius": a.radius, "classifier": clf.name + (f" ({reason})" if reason else ""),
-        "audio": "mic mean" if a.mix else "beam toward the bearing", "source": source, "gate": GATE,
+        "audio": "mic mean" if a.mix else "beam toward the bearing", "source": source,
+        "gate": a.gate or GATE, "min_prob": a.min_prob or MIN_PROB, "doa_s": a.doa_s,
     }, port=a.port)
     print(f"live map: {server.url}  ({source}, {len(s.arrays)} array(s), classifier {clf.name}). Ctrl-C to stop.")
     if not a.no_browser:
         webbrowser.open(server.url)
-    tracker = Tracker({arr.name: arr.pose for arr in s.arrays})
+    tracker = Tracker({arr.name: arr.pose for arr in s.arrays}, min_prob=a.min_prob or MIN_PROB)
+    gate = a.gate or GATE
+    history = {arr.name: deque(maxlen=max(1, round(a.doa_s))) for arr in s.arrays}  # last blocks per array
     t, start, last = 0.0, time.monotonic(), {}
     try:
         while True:
@@ -293,11 +300,12 @@ def cmd_live(a) -> None:
             obs, m = {}, {}
             for arr, block in zip(s.arrays, blocks):
                 m[arr.name] = mics(block, arr.profile)
-                scan: list = []
-                b, p = estimate_bearing(m[arr.name], arr.profile.fs, arr.profile.mic_xy, arr.pose.rotation_deg,
-                                        scan=scan)
+                history[arr.name].append(m[arr.name])
+                scan: list = []  # direction from the last doa_s seconds, class from the newest second
+                b, p = estimate_bearing(np.concatenate(history[arr.name], axis=1), arr.profile.fs,
+                                        arr.profile.mic_xy, arr.pose.rotation_deg, scan=scan)
                 level = 20 * np.log10(max(float(np.sqrt(np.mean(np.square(m[arr.name])))), 1e-12))
-                obs[arr.name] = Obs(b, p, tuple(scan), level)
+                obs[arr.name] = Obs(b, p, tuple(scan), level, gate)
             arr = max(s.arrays, key=lambda x: obs[x.name].level_db)  # classify the loudest array
             sig = m[arr.name].mean(axis=0) if a.mix else beam(m[arr.name], arr.profile.fs, arr.profile.mic_xy,
                                                                obs[arr.name].bearing, arr.pose.rotation_deg)
@@ -306,7 +314,7 @@ def cmd_live(a) -> None:
             last = state.to_json()
             server.publish(last)
             print(f"t={t:5.0f}s  " + "  ".join(f"{n} {o.bearing:5.1f}° p{o.power:4.2f}" for n, o in obs.items())
-                  + f"  -> {state.label} {state.prob:.0%}" + ("" if state.clear else "  (no clear direction)"),
+                  + f"  -> {state.label} {state.prob:.0%}" + (f"  ({state.why})" if state.why else ""),
                   flush=True)
             t = (t + blocks[0].shape[1] / arr.profile.fs) if a.replay else time.monotonic() - start
         server.publish({**last, "done": True})
