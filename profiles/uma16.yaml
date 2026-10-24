@@ -1,0 +1,15 @@
+# miniDSP UMA-16: 16 MEMS mics in a 4x4 grid, 42 mm pitch, miniDSP's USB board on the back.
+# USB Audio Class 2: no driver on macOS or Linux (also a Raspberry Pi). Schema: see respeaker_usb_v2.yaml.
+#
+# CHECK ON ARRIVAL:
+# - fs: use the rate `arrays list` shows for the device (48 kHz is the usual default).
+# - Front: mark one edge of the board as "forward" (+y) with tape. Grid positions are numbered
+#   row by row from that front row, each row left to right: 0 1 2 3 / 4 5 6 7 / 8 9 10 11 / 12 13 14 15.
+# - Channel order: the device's channel numbers do NOT have to follow the grid. Run `arrays meter`,
+#   tap the mic at each grid position 0..15 in turn and write the channel that jumps into mic_channels.
+# 42 mm pitch: spatial aliasing starts near 4 kHz, which the default 500-4000 Hz band stays under.
+name: miniDSP UMA-16
+n_channels: 16
+fs: 48000
+mic_channels: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+grid: {rows: 4, cols: 4, spacing: 0.042}

@@ -11,6 +11,9 @@
 #   circle:        {n, radius, start_deg}: n mics evenly on a circle of `radius` metres,
 #                  the first at start_deg, angles counter-clockwise from the array's +x axis
 #                  (as datasheets give them). Optional `step_deg` (default 360/n; negative = clockwise).
+#     or
+#   grid:          {rows, cols, spacing}: a rectangular grid centred on the array, positions
+#                  numbered row by row from the front row (+y), each row left to right (-x to +x).
 #
 # Channels on this firmware: 0 = processed (beamformed) output, 1-4 = raw mics, 5 = playback.
 # CHECK ON ARRIVAL: which raw channel sits at which angle. Run `arrays meter`, tap each mic and

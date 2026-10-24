@@ -54,7 +54,14 @@ def mic_xy_from(d: dict) -> np.ndarray:
         ang = np.radians(float(c.get("start_deg", 0.0)) + step * np.arange(n))
         r = float(c["radius"])
         return np.stack([r * np.cos(ang), r * np.sin(ang)])
-    raise ValueError("profile needs `mics` or `circle`")
+    if "grid" in d:
+        # rows front to back, each row left to right, centred on the array's origin
+        g = d["grid"]
+        cols, rows, sp = int(g["cols"]), int(g["rows"]), float(g["spacing"])
+        x = (np.arange(cols) - (cols - 1) / 2) * sp
+        y = ((rows - 1) / 2 - np.arange(rows)) * sp
+        return np.stack([np.tile(x, rows), np.repeat(y, cols)])
+    raise ValueError("profile needs `mics`, `circle` or `grid`")
 
 
 def load_profile(path: str | Path) -> Profile:

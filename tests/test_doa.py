@@ -56,3 +56,21 @@ def test_scan_peaks_at_bearing():
 def test_angle_diff_wraps():
     assert angle_diff(350.0, 10.0) == pytest.approx(-20.0)
     assert angle_diff(10.0, 350.0) == pytest.approx(20.0)
+
+
+def test_grid_geometry_rows_front_to_back_left_to_right():
+    xy = mic_xy_from({"grid": {"rows": 2, "cols": 3, "spacing": 0.1}})
+    np.testing.assert_allclose(xy.T, [[-0.1, 0.05], [0, 0.05], [0.1, 0.05],
+                                      [-0.1, -0.05], [0, -0.05], [0.1, -0.05]], atol=1e-12)
+
+
+@pytest.mark.parametrize("bearing", [0.0, 33.0, 200.0, 350.0])
+def test_uma16_grid_bearing(bearing):
+    prof = load_profile("profiles/uma16.yaml")
+    assert prof.mic_xy.shape == (2, 16)
+    rng = np.random.default_rng(int(bearing))
+    pose = Pose(0.0, 0.0, 135.0)
+    src = (math.sin(math.radians(bearing)), math.cos(math.radians(bearing)))
+    block = array_block(src, pose, prof, drone_like(prof.fs, prof.fs, rng), rng)
+    est, _ = estimate_bearing(mics(block, prof), prof.fs, prof.mic_xy, pose.rotation_deg)
+    assert abs(angle_diff(est, bearing)) < 5.0

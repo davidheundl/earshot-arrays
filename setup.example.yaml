@@ -7,10 +7,10 @@
 table: {width: 1.6, depth: 0.8}
 arrays:
   - name: A
-    profile: profiles/respeaker_usb_v2.yaml
+    profile: profiles/respeaker_usb_v2.yaml   # or profiles/uma16.yaml
     device: 0
     pose: [0.1, 0.1, 0.0]
   - name: B
-    profile: profiles/respeaker_usb_v2.yaml
+    profile: profiles/respeaker_usb_v2.yaml   # or profiles/uma16.yaml
     device: 1
     pose: [1.5, 0.1, 0.0]
