@@ -5,6 +5,15 @@ Two microphone arrays on one laptop: each array gives a bearing, the bearings cr
 ```bash
 uv sync
 uv run arrays list
+cp setup.example.yaml setup.yaml      # fill in devices and poses
+uv run arrays meter --profile profiles/respeaker_usb_v2.yaml --device 3   # tap each mic
+uv run arrays bearing --setup setup.yaml --array A
+uv run arrays locate                  # live plot
+uv run arrays record --seconds 30     # → recordings/<timestamp>/, replays with --replay
+
+# rehearse without hardware
+uv run arrays synth --out recordings/synthetic
+uv run arrays locate --setup recordings/synthetic/setup.yaml --replay recordings/synthetic --realtime
 ```
 
 See [CLAUDE.md](CLAUDE.md) for the pipeline, the planned modules and the setup checklist for the day.

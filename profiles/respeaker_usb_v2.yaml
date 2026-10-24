@@ -1,0 +1,22 @@
+# ReSpeaker USB Mic Array v2.0 (needs the 6-channel firmware for raw mics).
+#
+# Schema (every array profile):
+#   name:          free text
+#   n_channels:    channels the device delivers (open the stream with this many)
+#   fs:            sample rate in Hz
+#   mic_channels:  0-based device channels of the raw mics, in the order of the geometry below
+#   mics:          [[x, y], ...] mic positions in metres in the array's own frame
+#                  (x right, y forward), one per entry of mic_channels
+#     or
+#   circle:        {n, radius, start_deg}: n mics evenly on a circle of `radius` metres,
+#                  the first at start_deg, angles counter-clockwise from the array's +x axis
+#                  (as datasheets give them). Optional `step_deg` (default 360/n; negative = clockwise).
+#
+# Channels on this firmware: 0 = processed (beamformed) output, 1-4 = raw mics, 5 = playback.
+# CHECK ON ARRIVAL: which raw channel sits at which angle. Run `arrays meter`, tap each mic and
+# reorder mic_channels so that they follow 45, 135, 225, 315 deg.
+name: ReSpeaker USB Mic Array v2.0
+n_channels: 6
+fs: 16000
+mic_channels: [1, 2, 3, 4]
+circle: {n: 4, radius: 0.032, start_deg: 45}

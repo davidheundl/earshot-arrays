@@ -1,0 +1,16 @@
+# One setup on the table. Copy to setup.yaml and fill in on the day.
+#
+# Room frame: metres, origin at the table's south-west corner, x east, y "north"
+# (north = the table edge written down at setup). Bearings clockwise from north.
+# pose: [x, y, rotation_deg], rotation_deg = room bearing the array's forward (+y) axis points to.
+# device: index or name substring from `arrays list` (ignored with --replay).
+table: {width: 1.6, depth: 0.8}
+arrays:
+  - name: A
+    profile: profiles/respeaker_usb_v2.yaml
+    device: 0
+    pose: [0.1, 0.1, 0.0]
+  - name: B
+    profile: profiles/respeaker_usb_v2.yaml
+    device: 1
+    pose: [1.5, 0.1, 0.0]
