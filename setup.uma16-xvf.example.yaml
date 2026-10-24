@@ -1,0 +1,16 @@
+# Today's pair (Oct 24), measured: both facing north, centres 5'11" = 1.80 m apart, same height.
+# Facing north: B (reSpeaker Flex XVF3800, north = its top edge as the silkscreen reads) on the left
+# = west at x 0, A (UMA-16) on the right = east at x 1.80. Copy to setup.yaml.
+# Check values: a sound 1.5 m north of the middle (0.9, 1.5) reads A ~329, B ~31; in front of A
+# (1.8, 1.5) A ~0, B ~50; in front of B (0, 1.5) A ~310, B ~0. Use a phone playing loud, steady
+# sound (speech at 1.5 m barely rose above the room on Oct 24).
+table: {width: 1.8, depth: 0.5}
+arrays:
+  - name: A
+    profile: profiles/uma16.yaml
+    device: UMA16
+    pose: [1.80, 0.0, 0.0]
+  - name: B
+    profile: profiles/xvf3800_flex.yaml
+    device: reSpeaker
+    pose: [0.0, 0.0, 0.0]

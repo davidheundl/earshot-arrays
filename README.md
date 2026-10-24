@@ -27,6 +27,9 @@ uv run arrays live                      # --radius 6 for sources farther than 4 
 uv run arrays synth --setup setup.pair.example.yaml --path 2,3 0.5,2 3.5,1.5 --seconds-per-point 4 --out recordings/pair_synth
 uv run arrays live --replay recordings/pair_synth --fast   # rehearse without the second board
 
+# today's measured layouts (1.80 m apart, both north): UMA-16 + reSpeaker, or two UMA-16s
+cp setup.uma16-xvf.example.yaml setup.yaml    # or setup.uma16-pair.example.yaml (fill in the indices)
+
 # office twin: probability grid over the office map, works with 1, 2 or more arrays
 # office.yaml: the demo office from plans/office_sketch.png; its `arrays` marks move the setup's arrays
 # (rotation stays from setup.yaml). office.example.yaml is a placeholder to copy for another room.

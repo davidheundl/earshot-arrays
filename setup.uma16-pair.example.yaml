@@ -1,0 +1,26 @@
+# Two UMA-16s in today's layout (setup.uma16-xvf.example.yaml with the reSpeaker replaced by a second
+# UMA-16), for comparing the pair. Copy to setup.yaml.
+#
+# Both facing north, centres 1.80 m apart (5'11"), same height. Facing north: B on the left = west at
+# x 0, A on the right = east at x 1.80 (A is the board already in place).
+#   - Both boards flat, components up (profiles/uma16.yaml is mirror-checked that way), and the SAME
+#     board edge to the north on both, so both keep rotation_deg 0 (90-degree steps only).
+#   - Both are called "UMA16": `arrays list` gives two indices. Tap one board with
+#     `arrays meter --profile profiles/uma16.yaml --device N` to see which index is which, and fix
+#     the devices below (indices can swap when a board is plugged in again).
+#   - Calibrate each like A: `arrays bearing --setup setup.yaml --array B` with a phone 1.5 m north of
+#     the board reads ~0; if it reads ~90/180/270, turn rotation_deg by that step, not by a fine angle.
+#
+# Check values (same as the reSpeaker pair, so the two runs compare): a sound at (0.9, 1.5), 1.5 m
+# north of the middle, reads A ~329, B ~31; at (1.8, 1.5) A ~0, B ~50; at (0, 1.5) A ~310, B ~0.
+# Expect about +-3 deg per UMA-16 bearing (the reSpeaker gave about +-10).
+table: {width: 1.8, depth: 0.5}
+arrays:
+  - name: A
+    profile: profiles/uma16.yaml
+    device: 2
+    pose: [1.80, 0.0, 0.0]
+  - name: B
+    profile: profiles/uma16.yaml
+    device: 3
+    pose: [0.0, 0.0, 0.0]
