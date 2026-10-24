@@ -1,0 +1,29 @@
+[project]
+name = "earshot-arrays"
+version = "0.1.0"
+description = "Two real microphone arrays locate and classify a sound source in the room"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "numpy>=1.26",
+    "sounddevice>=0.4",
+    "pyroomacoustics>=0.7",
+    "soundfile>=0.12",
+    "pyyaml>=6.0",
+    "matplotlib>=3.8",
+]
+
+[project.scripts]
+arrays = "earshot_arrays.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+# Sound classifier (EfficientAT on the CPU): `uv sync --group ml`.
+ml = ["torch>=2.5,<2.10", "torchvision>=0.20,<0.25", "scipy>=1.11"]
+
+[tool.ruff]
+line-length = 110
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
