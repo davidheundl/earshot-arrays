@@ -71,6 +71,8 @@ def load_profile(path: str | Path) -> Profile:
 
 def load_setup(path: str | Path) -> Setup:
     path = Path(path)
+    if not path.exists():
+        raise SystemExit(f"{path} not found (copy setup.example.yaml to setup.yaml and fill it in)")
     d = yaml.safe_load(path.read_text())
     arrays = []
     for a in d["arrays"]:

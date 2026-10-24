@@ -26,7 +26,7 @@ class ReplaySource:
         self._n = int(self.fs * block_s)
         self._pos = 0
         self._realtime = realtime
-        self._block_s = block_s
+        self._t0 = time.monotonic()
 
     def read(self, latest: bool = False) -> np.ndarray | None:
         """Next full block, or None at the end of the file."""
@@ -34,8 +34,8 @@ class ReplaySource:
             return None
         block = self._data[:, self._pos:self._pos + self._n]
         self._pos += self._n
-        if self._realtime:
-            time.sleep(self._block_s)
+        if self._realtime:  # pace against the wall clock, so several sources share one timeline
+            time.sleep(max(0.0, self._t0 + self._pos / self.fs - time.monotonic()))
         return block
 
     def close(self) -> None:
