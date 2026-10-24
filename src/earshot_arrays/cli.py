@@ -336,7 +336,7 @@ def cmd_twin(a) -> None:
         office = dataclasses.replace(office, cell=a.cell)
     arrays = office_arrays(s, office)
     grid = office.grid()
-    tracker = Tracker(arrays, grid)
+    tracker = Tracker(arrays, grid, min_power=a.min_power)
     sources = open_sources(arrays, a)
     classify = load_classifier()
     plot = None
@@ -462,6 +462,8 @@ def main() -> None:
     p.add_argument("--setup", default="setup.yaml")
     p.add_argument("--office", help="office YAML (default office.yaml, else the placeholder office.example.yaml)")
     p.add_argument("--cell", type=float, help="grid cell size in metres (overrides the office's)")
+    p.add_argument("--min-power", type=float, default=MIN_POWER,
+                   help="SRP peak/mean a bearing needs to count; raise it until the quiet room reads weak")
     p.add_argument("--no-plot", action="store_true", help="print estimates only")
     p.add_argument("--save-plot", metavar="PNG", help="no window; save the last frame here")
     p.set_defaults(fn=cmd_twin)

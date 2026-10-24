@@ -1,0 +1,16 @@
+# Two UMA-16s for the office twin (`arrays twin`). Copy to setup.yaml.
+# Both boards are called "UMA16", so a name matches both: use the indices from `arrays list`, and
+# check which is which by tapping each board with `arrays meter --profile profiles/uma16.yaml --device N`
+# (indices can swap when a board is plugged in again).
+# The poses here are only used without an office: office.yaml's `arrays` marks move A and B onto the
+# plan, and only rotation_deg is taken from here (the clap-from-north check, boards on their mounts).
+table: {width: 1.6, depth: 0.8}
+arrays:
+  - name: A
+    profile: profiles/uma16.yaml
+    device: 2
+    pose: [0.0, 0.0, 0.0]
+  - name: B
+    profile: profiles/uma16.yaml
+    device: 3
+    pose: [1.0, 0.0, 0.0]
