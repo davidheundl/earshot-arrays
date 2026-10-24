@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from earshot_arrays.classify import CLASSES, load_classifier
+from earshot_arrays.classify import CLASSES, StandIn, load_classifier
 from earshot_arrays.config import load_setup
 from earshot_arrays.devices import mics
 from earshot_arrays.doa import estimate_bearing
@@ -47,9 +47,18 @@ def test_replay_files_needs_one_per_array(tmp_path):
         replay_files([str(tmp_path / "only.wav")], ["A", "B"])
 
 
-def test_classifier_says_it_is_a_stand_in_and_never_raises():
-    clf = load_classifier()
+def test_stand_in_says_so_and_never_raises():
+    clf = StandIn()
     r = clf(np.zeros(16000, dtype=np.float32), 16000)
     assert "STAND-IN" in r.source
     assert set(r.probs) == set(CLASSES)
     assert clf(np.array([]), 16000).label in CLASSES
+
+
+def test_loaded_classifier_never_raises():
+    clf = load_classifier()  # EfficientAT if torch + weights are there, else the stand-in
+    rng = np.random.default_rng(0)
+    for x in (0.1 * rng.standard_normal(48000), np.zeros(48000), np.array([])):
+        r = clf(x.astype(np.float32), 48000)
+        assert set(r.probs) == set(CLASSES)
+        assert sum(r.probs.values()) == pytest.approx(1.0, abs=1e-6)

@@ -11,6 +11,9 @@ uv run arrays bearing --setup setup.yaml --array A
 uv run arrays locate                  # live plot
 uv run arrays record --seconds 30     # → recordings/<timestamp>/, replays with --replay
 
+uv run arrays classify --profile profiles/uma16.yaml --device UMA16   # live class + bearing
+# classifier weights (not in git): copy mn10_as_mAP_471.pt and sound_head.pt from earshot's data/models/ to data/models/
+
 # rehearse without hardware
 uv run arrays synth --out recordings/synthetic
 uv run arrays locate --setup recordings/synthetic/setup.yaml --replay recordings/synthetic --realtime

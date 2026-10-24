@@ -116,6 +116,30 @@ def cmd_bearing(a) -> None:
         src.close()
 
 
+def cmd_classify(a) -> None:
+    from earshot_arrays.classify import load_classifier
+    from earshot_arrays.doa import estimate_bearing
+
+    arr = single_array(a)
+    src = open_sources([arr], a)[0]
+    clf = load_classifier()
+    print(f"{arr.name}: {arr.profile.name}; classifier: {clf.name} {getattr(clf, 'reason', '')}. Ctrl-C to stop.")
+    try:
+        while (block := src.read(latest=True)) is not None:
+            m = mics(block, arr.profile)
+            r = clf(m.mean(axis=0), arr.profile.fs)
+            b, p = estimate_bearing(m, arr.profile.fs, arr.profile.mic_xy, arr.pose.rotation_deg)
+            top = sorted(r.fine.items(), key=lambda kv: -kv[1])[:3]
+            fine = "  (" + ", ".join(f"{k} {v:.0%}" for k, v in top) + ")" if top else ""
+            level = 20 * np.log10(max(float(np.sqrt(np.mean(np.square(m)))), 1e-12))
+            print(f"{r.label.upper():6s} {r.probs[r.label]:4.0%}{fine}   bearing {b:5.1f}° p{p:4.2f}"
+                  f"   {level:5.1f} dBFS")
+    except KeyboardInterrupt:
+        pass
+    finally:
+        src.close()
+
+
 def cmd_locate(a) -> None:
     from earshot_arrays.classify import load_classifier
     from earshot_arrays.doa import estimate_bearing
@@ -127,7 +151,7 @@ def cmd_locate(a) -> None:
     sources = open_sources(s.arrays, a)
     classify = load_classifier()
     plot = None if a.no_plot else LivePlot(s, show=not a.save_plot)
-    print(f"classifier: {classify.name}")
+    print(f"classifier: {classify.name} {getattr(classify, 'reason', '')}")
     t, ended = 0, False
     try:
         while True:
@@ -297,6 +321,8 @@ def main() -> None:
     p.add_argument("--profile", required=True)
     p.add_argument("--device", required=True, help="device index or name substring")
     p.set_defaults(fn=cmd_map)
+    one_array(sub.add_parser("classify", help="live sound class (+ bearing) of one array")).set_defaults(
+        fn=cmd_classify)
     one_array(sub.add_parser("bearing", help="live bearing of one array")).set_defaults(fn=cmd_bearing)
 
     p = live(sub.add_parser("locate", help="two arrays → position + class, live plot"))

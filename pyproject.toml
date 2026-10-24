@@ -21,8 +21,12 @@ dev = ["pytest>=8", "ruff>=0.6"]
 # Sound classifier (EfficientAT on the CPU): `uv sync --group ml`.
 ml = ["torch>=2.5,<2.10", "torchvision>=0.20,<0.25", "scipy>=1.11"]
 
+[tool.uv]
+default-groups = ["dev", "ml"]  # torch for EfficientAT; `uv sync --no-group ml` to leave it out
+
 [tool.ruff]
 line-length = 110
+extend-exclude = ["src/earshot_arrays/efficientat"]  # vendored EfficientAT model code, kept as upstream
 
 [build-system]
 requires = ["hatchling"]
