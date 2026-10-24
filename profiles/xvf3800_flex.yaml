@@ -1,0 +1,22 @@
+# Seeed reSpeaker Flex (XMOS XVF3800), circular board, USB firmware C16K6Ch: 6 ch at 16 kHz.
+# Schema: see respeaker_usb_v2.yaml.
+#
+# Channels (0-based): 0-1 processed outputs (channel 0 has gain and clips: never use it for
+# direction), 2-5 raw mics 0-3. Checked on our board (Oct 24): 2-5 are coherent with each other
+# (GCC-PHAT), 0-1 with neither.
+#
+# Geometry: 66 mm square (the firmware's AEC_MIC_ARRAY_GEO; the Flex wiki says "44 mm spacing", our
+# four test directions cannot tell the two apart). Channel order 2-5 = silkscreen MIC0-3, checked by
+# blowing on each mic (Oct 24). Orientation checked by speech from four sides (Oct 24, board flat,
+# mics up): +y is the board's top edge as the silkscreen reads, east is to the right; with these
+# positions two rounds read within about 10 deg of N/E/S/W (mean about +2): not mirrored. Expect
+# about +-10 deg per bearing from this small board (the UMA-16 gives about +-3).
+name: reSpeaker Flex XVF3800
+n_channels: 6
+fs: 16000
+mic_channels: [2, 3, 4, 5]
+mics:
+  - [-0.033, -0.033]
+  - [-0.033, 0.033]
+  - [0.033, 0.033]
+  - [0.033, -0.033]
