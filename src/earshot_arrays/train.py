@@ -2,7 +2,8 @@
 
     uv run arrays train                        # recordings/<label><n>/ -> data/models/room_head.pt
 
-Every recording directory (as `record` writes it) is labelled by its name without the trailing
+Every recording directory named <label><n> (as `record` writes it; others such as demo_room1 are
+skipped) is labelled by its name without the trailing
 number: drone1, drone2 -> "drone"; plane1 -> "plane"; quiet1 -> "quiet". Each is cut into 1 s
 windows (0.5 s hop) of the mic mix. In a recording of a sound, windows more than LOUD_DB below the
 recording's median level are dropped (the sound had stopped). The last TEST_SHARE of every
@@ -44,7 +45,7 @@ def windows(path: Path, channels: list[int] | None = None) -> tuple[list[np.ndar
 def collect(recordings: Path, extra: list[tuple[str, Path]] = ()) -> list[tuple[str, str, list, int]]:
     """(source name, label, windows, fs) per recording, with quiet tails dropped."""
     out = []
-    for d in sorted(p for p in recordings.iterdir() if p.is_dir() and re.search(r"\d+$", p.name)):
+    for d in sorted(p for p in recordings.iterdir() if p.is_dir() and re.fullmatch(r"[a-z]+\d+", p.name)):
         if not (d / "setup.yaml").exists():
             continue  # still recording
         setup = load_setup(d / "setup.yaml")
