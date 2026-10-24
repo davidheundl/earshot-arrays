@@ -15,6 +15,8 @@ import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import numpy as np
+
 
 class LiveMapServer:
     def __init__(self, config: dict, port: int = 8765, host: str = "127.0.0.1"):
@@ -222,7 +224,8 @@ function hud() {
   document.getElementById("foot").textContent = `classifier: ${cfg.classifier} · audio: ${cfg.audio}` +
     ` · class shown when clarity ≥ ${cfg.gate} (loudest ${Math.round(100 * cfg.loudest)} % of frames), not quiet, and ≥ ${Math.round(100 * cfg.min_prob)} % sure · direction over ${cfg.doa_s} s`;
   const stale = Date.now() - lastOk > 4000;
-  document.getElementById("banner").textContent = st.done ? "end of recording" : (stale && lastOk ? "no data from the audio loop" : "");
+  document.getElementById("banner").textContent = st.done ? "end of recording" : st.note ? st.note :
+    (stale && lastOk ? "no data from the audio loop" : "");
 }
 
 async function poll() {
@@ -237,6 +240,22 @@ async function poll() {
 resize(); poll();
 </script></body></html>
 """
+
+
+STALL_S = 3.0  # live: no block for this long -> reopen the device
+BAD_S = 3  # live: this many seconds in a row of unusable audio -> reopen the device
+RATE_WINDOW_S = 6.0  # live: blocks arriving much faster than one per second -> reopen
+
+
+def block_problem(block: np.ndarray, n_channels: int, n_samples: int) -> str:
+    """Why a device block cannot be used, or "" if it is fine."""
+    if block.shape != (n_channels, n_samples):
+        return f"block shape {block.shape}, expected {(n_channels, n_samples)}"
+    if not np.all(np.isfinite(block)):
+        return f"{int(np.sum(~np.isfinite(block)))} non-finite samples"
+    if float(np.max(np.ptp(block, axis=1))) == 0.0:
+        return "all channels constant"
+    return ""
 
 
 def add_parser(sub, live) -> None:
@@ -257,17 +276,17 @@ def add_parser(sub, live) -> None:
 
 
 def cmd_live(a) -> None:
+    import queue
+    import sys
     import time
     import webbrowser
     from collections import deque
     from pathlib import Path
 
-    import numpy as np
-
     from earshot_arrays.classify import load_classifier
     from earshot_arrays.cli import open_sources
     from earshot_arrays.config import load_setup
-    from earshot_arrays.devices import mics
+    from earshot_arrays.devices import BLOCK_S, DeviceSource, mics
     from earshot_arrays.doa import beam, estimate_bearing
     from earshot_arrays.track import GATE, MIN_PROB, Obs, Tracker
 
@@ -295,11 +314,63 @@ def cmd_live(a) -> None:
     gate = a.gate or GATE
     history = {arr.name: deque(maxlen=max(1, round(a.doa_s))) for arr in s.arrays}  # last blocks per array
     t, start, last = 0.0, time.monotonic(), {}
+    bad = {arr.name: 0 for arr in s.arrays}  # live: seconds in a row without a usable direction
+    arrivals = {arr.name: deque() for arr in s.arrays}  # live: when blocks came, to catch a runaway stream
+
+    def log(msg: str) -> None:
+        print(f"[audio] t={time.monotonic() - start:6.0f}s  {msg}", file=sys.stderr, flush=True)
+
+    def reopen(i: int, why: str) -> None:
+        """Close array i's stream and open it again (by name, so a changed device index is fine)."""
+        arr = s.arrays[i]
+        log(f"{arr.name}: {why} -> reopening the device")
+        server.publish({**last, "note": f"audio of {arr.name}: {why}, reconnecting…"})
+        try:
+            sources[i].close()
+        except Exception as e:  # noqa: BLE001 - the old stream may already be gone
+            log(f"{arr.name}: closing the old stream failed: {e}")
+        while True:
+            try:
+                sources[i] = DeviceSource(arr.device, arr.profile)
+                break
+            except (Exception, SystemExit) as e:  # noqa: BLE001 - unplugged: keep trying until it is back
+                log(f"{arr.name}: cannot open the device yet ({e}); retrying in 2 s")
+                server.publish({**last, "note": f"audio of {arr.name}: device not found, retrying…"})
+                time.sleep(2)
+        history[arr.name].clear()
+        arrivals[arr.name].clear()
+        bad[arr.name] = 0
+        log(f"{arr.name}: device open again")
+
     try:
         while True:
-            blocks = [src.read(latest=True) for src in sources]
-            if any(b is None for b in blocks):
+            blocks = []
+            for i, (arr, src) in enumerate(zip(s.arrays, sources)):
+                if a.replay:
+                    blocks.append(src.read(latest=True))
+                    continue
+                try:
+                    block = src.read(latest=True, timeout=STALL_S)
+                except queue.Empty:
+                    reopen(i, f"no audio for {STALL_S:.0f} s")
+                    block = None
+                if block is not None:
+                    n = int(arr.profile.fs * BLOCK_S)
+                    why = block_problem(block, arr.profile.n_channels, n)
+                    now = time.monotonic()
+                    arrivals[arr.name].append(now)
+                    while arrivals[arr.name] and arrivals[arr.name][0] < now - RATE_WINDOW_S:
+                        arrivals[arr.name].popleft()
+                    if not why and len(arrivals[arr.name]) > 1.5 * RATE_WINDOW_S / BLOCK_S:
+                        why = f"{len(arrivals[arr.name]) / RATE_WINDOW_S:.1f} blocks/s instead of {1 / BLOCK_S:.0f}"
+                    if why:
+                        reopen(i, why)
+                        block = None
+                blocks.append(block)
+            if a.replay and any(b is None for b in blocks):
                 break
+            if any(b is None for b in blocks):
+                continue  # a device was reopened: start over with fresh blocks
             obs, m = {}, {}
             for arr, block in zip(s.arrays, blocks):
                 m[arr.name] = mics(block, arr.profile)
@@ -309,6 +380,14 @@ def cmd_live(a) -> None:
                                         arr.profile.mic_xy, arr.pose.rotation_deg, scan=scan, loudest=a.loudest)
                 level = 20 * np.log10(max(float(np.sqrt(np.mean(np.square(m[arr.name])))), 1e-12))
                 obs[arr.name] = Obs(b, p, tuple(scan), level, gate)
+                if not a.replay:  # SRP found nothing at all although audio arrives: the stream is broken
+                    if p == 0.0 and level > -100:
+                        bad[arr.name] += 1
+                        sd = np.std(m[arr.name], axis=1)
+                        log(f"{arr.name}: no direction at {level:.0f} dBFS (channel std {sd.min():.2e}..{sd.max():.2e}, "
+                            f"{len(arrivals[arr.name]) / RATE_WINDOW_S:.1f} blocks/s), {bad[arr.name]} s in a row")
+                    else:
+                        bad[arr.name] = 0
             arr = max(s.arrays, key=lambda x: obs[x.name].level_db)  # classify the loudest array
             sig = m[arr.name].mean(axis=0) if a.mix else beam(m[arr.name], arr.profile.fs, arr.profile.mic_xy,
                                                                obs[arr.name].bearing, arr.pose.rotation_deg)
@@ -316,6 +395,9 @@ def cmd_live(a) -> None:
             state = tracker.update(t, obs, r.fine or r.probs)
             last = state.to_json()
             server.publish(last)
+            for i, arr in enumerate(s.arrays):
+                if bad[arr.name] >= BAD_S:
+                    reopen(i, f"no direction for {BAD_S} s although audio arrives")
             print(f"t={t:5.0f}s  " + "  ".join(f"{n} {o.bearing:5.1f}° p{o.power:4.2f}" for n, o in obs.items())
                   + f"  -> {state.label} {state.prob:.0%}" + (f"  ({state.why})" if state.why else ""),
                   flush=True)

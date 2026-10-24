@@ -59,10 +59,10 @@ class DeviceSource:
                                       dtype="float32", callback=callback)
         self._stream.start()
 
-    def read(self, latest: bool = False) -> np.ndarray | None:
-        """Next block (waits for it). latest=True drops older queued blocks, so a slow consumer
-        always sees the newest second instead of falling behind."""
-        block = self._q.get()
+    def read(self, latest: bool = False, timeout: float | None = None) -> np.ndarray | None:
+        """Next block (waits for it, or raises queue.Empty after `timeout` seconds). latest=True drops
+        older queued blocks, so a slow consumer always sees the newest second instead of falling behind."""
+        block = self._q.get(timeout=timeout)
         while latest and not self._q.empty():
             block = self._q.get_nowait()
         return block
