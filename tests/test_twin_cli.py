@@ -61,3 +61,23 @@ def test_twin_one_array_fan_along_bearing(tmp_path):
     k = int(bearing_to(pose, *src) // 5)
     along = np.isin(bins, [(k + d) % 72 for d in (-1, 0, 1)])
     assert tracker.belief.p[along].sum() > 0.5
+
+
+def test_mocked_array_crosses_the_real_ray_and_stays_silent_when_quiet():
+    from earshot_arrays.belief import Grid
+    from earshot_arrays.synth import array_block, drone_like
+
+    real = ArraySetup("B", UMA16, None, Pose(16.05, 6.74, 270.0))
+    mock = ArraySetup("A", UMA16, None, Pose(16.05, 9.46, 270.0))
+    src = (12.0, 8.0)
+    tr = Tracker([real, mock], Grid.from_bounds(8.0, 3.0, 17.0, 13.0, 0.25), mock={1}, mock_source=src)
+    rng = np.random.default_rng(1)
+    for _ in range(3):
+        block = array_block(src, real.pose, UMA16, drone_like(UMA16.fs, UMA16.fs, rng), rng)
+        rays, est, _ = tr.step([block, None])
+    assert abs((rays[1][0] - bearing_to(mock.pose, *src) + 180) % 360 - 180) < 10
+    assert rays[1][1] == rays[0][1]  # as clear as the real array
+    assert math.hypot(est.x - src[0], est.y - src[1]) < 0.6
+    quiet = (0.001 * rng.standard_normal((UMA16.n_channels, UMA16.fs))).astype(np.float32)
+    rays, _, _ = tr.step([quiet, None])
+    assert rays[1][1] == rays[0][1] < 1.3  # nothing clear heard: the mock says nothing either

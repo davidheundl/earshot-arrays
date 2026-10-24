@@ -173,6 +173,20 @@ class TwinPlot:
         ax.set_title(office.name, fontsize=13, color=FG, loc="left", weight="bold")
         self.fig.tight_layout()
 
+    def set_mock_source(self, x: float, y: float) -> None:
+        """Mark where a mocked array's virtual source is (a hollow star)."""
+        if not hasattr(self, "mock_marker"):
+            (self.mock_marker,) = self.ax.plot([], [], "*", ms=20, mfc="none", mec=FG, mew=1.8, zorder=9.5)
+        self.mock_marker.set_data([x], [y])
+
+    def on_click(self, fn) -> None:
+        """Call fn(x, y) in room metres when the map is clicked."""
+        def handler(ev):
+            if ev.inaxes is self.ax and ev.xdata is not None:
+                fn(float(ev.xdata), float(ev.ydata))
+
+        self.fig.canvas.mpl_connect("button_press_event", handler)
+
     def _cell_edges(self) -> list:
         """Segments of the cell grid, floor cells only (a masked QuadMesh still strokes its edges)."""
         g = self.grid

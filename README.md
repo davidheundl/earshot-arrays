@@ -30,6 +30,10 @@ uv run arrays live --replay recordings/pair_synth --fast   # rehearse without th
 # today's measured layouts (1.80 m apart, both north): UMA-16 + reSpeaker, or two UMA-16s
 cp setup.uma16-xvf.example.yaml setup.yaml    # or setup.uma16-pair.example.yaml (fill in the indices)
 
+# one board, triangulation demo: the real array plus a mocked one on another office mark; click the
+# twin's map where the sound is, the mock hears that point whenever the real array hears something clear
+uv run arrays twin --setup setup.yaml --office office.yaml --mock A
+
 # office twin: probability grid over the office map, works with 1, 2 or more arrays
 # office.yaml: the demo office from plans/office_sketch.png; its `arrays` marks move the setup's arrays
 # (rotation stays from setup.yaml). office.example.yaml is a placeholder to copy for another room.

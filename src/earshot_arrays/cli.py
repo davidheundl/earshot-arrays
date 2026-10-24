@@ -264,34 +264,62 @@ class LivePlot:
         self.fig.savefig(path, dpi=120, bbox_inches="tight")
 
 
-class Tracker:
-    """Probability grid over the office, fed once per second by every array's scan (any number of arrays)."""
+MOCK_SIGMA_DEG = 3.0  # bearing noise of a mocked array: what a UMA-16 scatters
 
-    def __init__(self, arrays, grid, min_power: float = MIN_POWER):
+
+class Tracker:
+    """Probability grid over the office, fed once per second by every array's scan (any number of arrays).
+
+    A mocked array (index in `mock`) has no audio: it hears `mock_source` (room x, y; the plot sets it
+    by a click) with MOCK_SIGMA_DEG of noise, and only as clearly as the clearest real array, so it
+    adds a crossing ray when something is heard and stays silent otherwise. For demos with one board."""
+
+    def __init__(self, arrays, grid, min_power: float = MIN_POWER, mock: set[int] | None = None,
+                 mock_source: tuple[float, float] | None = None, seed: int = 0):
         from earshot_arrays.belief import Belief, bearing_grid
 
         self.arrays, self.min_power = list(arrays), min_power  # ArraySetups, poses already in the room frame
         self.bearings = [bearing_grid(grid, arr.pose) for arr in self.arrays]  # fixed per pose: once
         self.belief = Belief(grid)
         self.scans: list[list] = [[] for _ in self.arrays]  # last SRP scan per array, for the plot's wedges
+        self.mock, self.mock_source = set(mock or ()), mock_source
+        self.rng = np.random.default_rng(seed)
+
+    def _mock_ray(self, arr, power: float) -> tuple[tuple[float, float], list]:
+        """(bearing, power) and a peaked scan of a mocked array toward mock_source."""
+        from earshot_arrays.doa import SCAN_BINS
+        from earshot_arrays.locate import bearing_to
+
+        if self.mock_source is None:
+            return (0.0, 1.0), []
+        b = (bearing_to(arr.pose, *self.mock_source) + self.rng.normal(0.0, MOCK_SIGMA_DEG)) % 360.0
+        d = (360.0 / SCAN_BINS * (np.arange(SCAN_BINS) + 0.5) - b + 180.0) % 360.0 - 180.0
+        return (b, power), list(np.exp(-0.5 * (d / 15.0) ** 2))
 
     def step(self, blocks, classify=None):
-        """(rays [(bearing, power)], Estimate, class Result or None) after one block from every array."""
+        """(rays [(bearing, power)], Estimate, class Result or None) after one block from every array
+        (None for a mocked one)."""
         from earshot_arrays.belief import peak_likelihood
         from earshot_arrays.doa import estimate_bearing
 
-        rays, obs = [], []
-        for i, (arr, bearings, block) in enumerate(zip(self.arrays, self.bearings, blocks)):
+        rays: list = [None] * len(self.arrays)
+        for i, (arr, block) in enumerate(zip(self.arrays, blocks)):
+            if i in self.mock:
+                continue
             self.scans[i] = []
-            b, p = estimate_bearing(mics(block, arr.profile), arr.profile.fs, arr.profile.mic_xy,
-                                    arr.pose.rotation_deg, scan=self.scans[i])
-            rays.append((b, p))
-            obs.append(peak_likelihood(bearings, b, p, min_power=self.min_power))
+            rays[i] = estimate_bearing(mics(block, arr.profile), arr.profile.fs, arr.profile.mic_xy,
+                                       arr.pose.rotation_deg, scan=self.scans[i])
+        heard = max((r[1] for r in rays if r is not None), default=1.0)
+        for i in self.mock:
+            rays[i], self.scans[i] = self._mock_ray(self.arrays[i], heard)
+        obs = [peak_likelihood(bearings, b, p, min_power=self.min_power)
+               for bearings, (b, p) in zip(self.bearings, rays)]
         self.belief.predict()
         self.belief.update(obs)
         cls = None
-        if classify is not None:  # the loudest array's mic mix, as in locate
-            k = int(np.argmax([np.mean(np.square(b)) for b in blocks]))
+        if classify is not None:  # the loudest real array's mic mix, as in locate
+            k = max((i for i in range(len(blocks)) if i not in self.mock),
+                    key=lambda i: float(np.mean(np.square(blocks[i]))))
             arr = self.arrays[k]
             cls = classify(mics(blocks[k], arr.profile).mean(axis=0), arr.profile.fs)
         return rays, self.belief.estimate(), cls
@@ -337,15 +365,41 @@ def cmd_twin(a) -> None:
     if a.cell:
         office = dataclasses.replace(office, cell=a.cell)
     arrays = office_arrays(s, office)
+    real = list(arrays)
+    mock_src = None
+    if a.mock:  # a virtual array on an office mark, rotation as the first real array
+        from earshot_arrays.office import mark_pose
+
+        if a.mock not in office.arrays:
+            raise SystemExit(f"--mock {a.mock}: no such mark in {office.name!r} ({', '.join(office.arrays)})")
+        if any(arr.name == a.mock for arr in arrays):
+            raise SystemExit(f"--mock {a.mock}: the setup already has a real array {a.mock}")
+        arrays = arrays + (dataclasses.replace(real[0], name=a.mock, device=None,
+                                               pose=mark_pose(real[0].pose, office.arrays[a.mock])),)
+        xmin, ymin, xmax, ymax = office.bounds
+        mock_src = tuple(float(v) for v in a.mock_source.split(",")) if a.mock_source else \
+            ((xmin + xmax) / 2, (ymin + ymax) / 2)
+        print(f"{a.mock}: MOCKED at {office.arrays[a.mock]}, hears the virtual source at {mock_src} "
+              f"(click the map to move it)")
     grid = office.grid()
-    tracker = Tracker(arrays, grid, min_power=a.min_power)
-    sources = open_sources(arrays, a)
+    mock = {len(arrays) - 1} if a.mock else set()
+    tracker = Tracker(arrays, grid, min_power=a.min_power, mock=mock, mock_source=mock_src)
+    sources = open_sources(real, a)
     classify = load_classifier()
     plot = None
     if not a.no_plot:
         from earshot_arrays.twin import TwinPlot
 
-        plot = TwinPlot(office, [(arr.name, arr.pose) for arr in arrays], grid, show=not a.save_plot)
+        plot = TwinPlot(office, [(arr.name + (" (mock)" if i in mock else ""), arr.pose)
+                                 for i, arr in enumerate(arrays)], grid, show=not a.save_plot)
+        if a.mock:
+            def moved(x: float, y: float) -> None:
+                tracker.mock_source = (x, y)
+                plot.set_mock_source(x, y)
+                print(f"virtual source moved to ({x:.2f}, {y:.2f})", flush=True)
+
+            plot.set_mock_source(*mock_src)
+            plot.on_click(moved)
     print(f"{office.name}: {grid.nx} x {grid.ny} cells of {grid.cell} m, {len(arrays)} array(s); "
           f"classifier: {classify.name} {getattr(classify, 'reason', '')}")
     t, ended = 0, False
@@ -355,6 +409,7 @@ def cmd_twin(a) -> None:
             if any(b is None for b in blocks):
                 ended = True
                 break
+            blocks += [None] * len(mock)  # the mocked array is last
             rays, est, cls = tracker.step(blocks, classify)
             print(f"t={t:4d}s  " + "  ".join(f"{arr.name} {b:6.1f}° p{p:4.2f}" for arr, (b, p) in
                                            zip(arrays, rays))
@@ -468,6 +523,9 @@ def main() -> None:
                    help="SRP peak/mean a bearing needs to count; raise it until the quiet room reads weak")
     p.add_argument("--no-plot", action="store_true", help="print estimates only")
     p.add_argument("--save-plot", metavar="PNG", help="no window; save the last frame here")
+    p.add_argument("--mock", metavar="MARK", help="add a virtual array on this office mark (e.g. A): it hears a "
+                   "virtual source you place by clicking the map, whenever a real array hears something clear")
+    p.add_argument("--mock-source", metavar="X,Y", help="where the virtual source starts (default: the office centre)")
     p.set_defaults(fn=cmd_twin)
 
     from earshot_arrays.livemap import add_parser as add_live_map
