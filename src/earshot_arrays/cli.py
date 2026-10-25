@@ -272,11 +272,16 @@ class Tracker:
 
     A mocked array (index in `mock`) has no audio: it hears `mock_source` (room x, y; the plot sets it
     by a click) with MOCK_SIGMA_DEG of noise, and only as clearly as the clearest real array, so it
-    adds a crossing ray when something is heard and stays silent otherwise. For demos with one board."""
+    adds a crossing ray when something is heard and stays silent otherwise. For demos with one board.
+
+    With `follow` (index of a real array) and `zone` (x, y arrays -> bool), the source is not fixed: it is
+    put on the followed array's ray where the ray runs through the zone (the part nearest `prefer`, the
+    last click, else the last source), so the mock crosses that ray only inside the zone and is silent
+    when the ray misses it."""
 
     def __init__(self, arrays, grid, min_power: float = MIN_POWER, mock: set[int] | None = None,
                  mock_source: tuple[float, float] | None = None, seed: int = 0, doa_s: float = 1.0,
-                 loudest: float | None = None):
+                 loudest: float | None = None, follow: int | None = None, zone=None):
         from collections import deque
 
         from earshot_arrays.belief import Belief, bearing_grid
@@ -291,6 +296,30 @@ class Tracker:
         # reSpeaker reached the gate in 100 % of speech seconds this way, 81 % with 1 s of all frames
         self.history = [deque(maxlen=max(1, round(doa_s))) for _ in self.arrays]
         self.loudest = loudest
+        self.follow, self.zone, self.prefer = follow, zone, None
+
+    def _follow_source(self, ray) -> tuple[float, float] | None:
+        """Where on the followed array's ray (bearing, power) the zone is, or None if the ray misses it."""
+        from earshot_arrays.locate import direction
+
+        b, p = ray
+        if p < self.min_power:
+            return None
+        pose = self.arrays[self.follow].pose
+        dx, dy = direction(b)
+        t = np.arange(0.3, 25.0, 0.05)  # metres along the ray
+        x, y = pose.x + t * dx, pose.y + t * dy
+        inside = np.asarray(self.zone(x, y), dtype=bool)
+        if not inside.any():
+            return None
+        # runs of consecutive samples inside the zone; take the one nearest the preferred point
+        edges = np.flatnonzero(np.diff(np.concatenate([[0], inside.astype(int), [0]])))
+        runs = list(zip(edges[::2], edges[1::2]))
+        ref = self.prefer or self.mock_source
+        mids = [((x[a] + x[e - 1]) / 2, (y[a] + y[e - 1]) / 2) for a, e in runs]
+        if ref is None:
+            return mids[0]
+        return min(mids, key=lambda m: math.hypot(m[0] - ref[0], m[1] - ref[1]))
 
     def _mock_ray(self, arr, power: float) -> tuple[tuple[float, float], list]:
         """(bearing, power) and a peaked scan of a mocked array toward mock_source."""
@@ -319,6 +348,12 @@ class Tracker:
                                        arr.profile.mic_xy, arr.pose.rotation_deg, scan=self.scans[i],
                                        loudest=self.loudest)
         heard = max((r[1] for r in rays if r is not None), default=1.0)
+        if self.follow is not None:
+            src = self._follow_source(rays[self.follow])
+            if src is None:
+                heard = 1.0  # the followed ray misses the zone (or is not clear): the mock hears nothing
+            else:
+                self.mock_source = src
         for i in self.mock:
             rays[i], self.scans[i] = self._mock_ray(self.arrays[i], heard)
         obs = [peak_likelihood(bearings, b, p, min_power=self.min_power)
@@ -366,6 +401,30 @@ def find_office(path: str | None):
     return load_office(path)
 
 
+def mock_zone(spec: str, office):
+    """(x, y) -> bool: inside one of the rectangles "x0,y0,x1,y1;..." and not on furniture."""
+    from earshot_arrays.belief import inside_polygon
+
+    rects = [tuple(float(v) for v in r.split(",")) for r in spec.split(";") if r.strip()]
+    furniture = [list(ar.polygon) for ar in office.areas if ar.kind == "furniture"]
+
+    def inside(x, y):
+        x, y = np.asarray(x, float), np.asarray(y, float)
+        ok = np.zeros(x.shape, bool)
+        for x0, y0, x1, y1 in rects:
+            ok |= (x >= min(x0, x1)) & (x <= max(x0, x1)) & (y >= min(y0, y1)) & (y <= max(y0, y1))
+        for poly in furniture:
+            ok &= ~inside_polygon(x, y, poly)
+        return ok
+
+    return inside
+
+
+# The demo office: the gap between the arrays table and the table west of it, and a strip just behind
+# (west of) that table, along the tables' length
+MOCK_ZONE = "14.05,6.2,15.15,10.9;11.2,6.2,12.38,10.9"
+
+
 def cmd_twin(a) -> None:
     from earshot_arrays.classify import load_classifier
 
@@ -392,8 +451,15 @@ def cmd_twin(a) -> None:
               f"(click the map to move it)")
     grid = office.grid()
     mock = {len(arrays) - 1} if a.mock else set()
+    follow, zone = None, None
+    if a.mock and a.mock_follow:
+        names = [arr.name for arr in real]
+        if a.mock_follow not in names:
+            raise SystemExit(f"--mock-follow {a.mock_follow}: the real arrays are {', '.join(names)}")
+        follow, zone = names.index(a.mock_follow), mock_zone(a.mock_zone, office)
+        print(f"{a.mock}: follows {a.mock_follow}'s ray, crossing only inside {a.mock_zone}", flush=True)
     tracker = Tracker(arrays, grid, min_power=a.min_power, mock=mock, mock_source=mock_src, doa_s=a.doa_s,
-                      loudest=a.loudest if a.loudest < 1 else None)
+                      loudest=a.loudest if a.loudest < 1 else None, follow=follow, zone=zone)
     sources = open_sources(real, a)
     classify = load_classifier()
     plot = None
@@ -404,6 +470,10 @@ def cmd_twin(a) -> None:
                                  for i, arr in enumerate(arrays)], grid, show=not a.save_plot)
         if a.mock:
             def moved(x: float, y: float) -> None:
+                if follow is not None:  # following: a click only says which part of the zone to prefer
+                    tracker.prefer = (x, y)
+                    print(f"mock prefers the zone near ({x:.2f}, {y:.2f})", flush=True)
+                    return
                 tracker.mock_source = (x, y)
                 plot.set_mock_source(x, y)
                 print(f"virtual source moved to ({x:.2f}, {y:.2f})", flush=True)
@@ -426,6 +496,8 @@ def cmd_twin(a) -> None:
                   + f"  est ({est.x:5.2f}, {est.y:5.2f}) m ± {est.r50:.2f} p_max {est.p_max:.3f}"
                   + f"  {cls.label} [{cls.source}]")
             if plot:
+                if follow is not None and tracker.mock_source is not None:
+                    plot.set_mock_source(*tracker.mock_source)
                 plot.update(tracker.belief.p, rays, est, cls, t, tracker.scans)
             t += 1
     except KeyboardInterrupt:
@@ -539,6 +611,10 @@ def main() -> None:
     p.add_argument("--mock", metavar="MARK", help="add a virtual array on this office mark (e.g. A): it hears a "
                    "virtual source you place by clicking the map, whenever a real array hears something clear")
     p.add_argument("--mock-source", metavar="X,Y", help="where the virtual source starts (default: the office centre)")
+    p.add_argument("--mock-follow", metavar="NAME", help="the mock crosses this real array's ray, inside --mock-zone "
+                   "only (silent when the ray misses it); a click picks which part of the zone")
+    p.add_argument("--mock-zone", default=MOCK_ZONE, metavar="X0,Y0,X1,Y1;...",
+                   help="rectangles the mocked crossing may lie in, furniture excluded (default: the demo office's)")
     p.set_defaults(fn=cmd_twin)
 
     from earshot_arrays.livemap import add_parser as add_live_map

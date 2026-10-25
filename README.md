@@ -33,6 +33,9 @@ cp setup.uma16-xvf.example.yaml setup.yaml    # or setup.uma16-pair.example.yaml
 # one board, triangulation demo: the real array plus a mocked one on another office mark; click the
 # twin's map where the sound is, the mock hears that point whenever the real array hears something clear
 uv run arrays twin --setup setup.yaml --office office.yaml --mock A
+# ... or let the mock follow a real array's ray: it crosses only inside --mock-zone (default: the gap
+# between the demo office's tables and a strip just behind them), silent when the ray misses the zone
+uv run arrays twin --setup setup.yaml --office office.yaml --mock B --mock-follow A
 
 # office twin: probability grid over the office map, works with 1, 2 or more arrays
 # office.yaml: the demo office from plans/office_sketch.png; its `arrays` marks move the setup's arrays

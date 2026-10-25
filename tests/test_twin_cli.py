@@ -81,3 +81,29 @@ def test_mocked_array_crosses_the_real_ray_and_stays_silent_when_quiet():
     quiet = (0.001 * rng.standard_normal((UMA16.n_channels, UMA16.fs))).astype(np.float32)
     rays, _, _ = tr.step([quiet, None])
     assert rays[1][1] == rays[0][1] < 1.3  # nothing clear heard: the mock says nothing either
+
+
+def test_mock_following_a_real_ray_crosses_only_inside_the_zone():
+    from earshot_arrays.cli import MOCK_ZONE, mock_zone
+    from earshot_arrays.synth import array_block, drone_like
+
+    office = load_office(ROOT / "office.yaml")
+    zone = mock_zone(MOCK_ZONE, office)
+    real = ArraySetup("A", UMA16, None, Pose(16.05, 9.46, 270.0))
+    mock = ArraySetup("B", UMA16, None, Pose(16.05, 6.74, 270.0))
+    rng = np.random.default_rng(2)
+
+    def run(src, steps=3):
+        tr = Tracker([real, mock], office.grid(), mock={1}, follow=0, zone=zone, doa_s=2, loudest=0.3)
+        for _ in range(steps):
+            block = array_block(src, real.pose, UMA16, drone_like(UMA16.fs, UMA16.fs, rng), rng)
+            rays, est, _ = tr.step([block, None])
+        return tr, rays, est
+
+    tr, rays, est = run((14.6, 8.6))  # in the gap between the tables
+    assert zone(np.array([tr.mock_source[0]]), np.array([tr.mock_source[1]]))[0]
+    assert rays[1][1] >= tr.min_power
+    assert math.hypot(est.x - 14.6, est.y - 8.6) < 1.0
+    tr, rays, _ = run((16.0, 14.0))  # north along the table: A's ray misses the zone
+    assert rays[1][1] < tr.min_power
+    assert not zone(np.array([13.0]), np.array([8.0]))[0]  # on the table west of the gap: never
