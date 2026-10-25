@@ -13,6 +13,7 @@ import numpy as np
 
 from earshot_arrays.config import ArraySetup, Pose, Setup, load_profile, load_setup, write_setup
 from earshot_arrays.devices import DeviceSource, list_inputs, mics
+from earshot_arrays.mock import MOCK_ZONE as MOCK_ZONE_DEFAULT
 from earshot_arrays.replay import ReplaySource, replay_files, write_wav
 
 MIN_POWER = 1.3  # SRP peak/mean below this: no direction stands out, no ray is drawn
@@ -264,14 +265,11 @@ class LivePlot:
         self.fig.savefig(path, dpi=120, bbox_inches="tight")
 
 
-MOCK_SIGMA_DEG = 3.0  # bearing noise of a mocked array: what a UMA-16 scatters
-
-
 class Tracker:
     """Probability grid over the office, fed once per second by every array's scan (any number of arrays).
 
     A mocked array (index in `mock`) has no audio: it hears `mock_source` (room x, y; the plot sets it
-    by a click) with MOCK_SIGMA_DEG of noise, and only as clearly as the clearest real array, so it
+    by a click) with mock.SIGMA_DEG of noise, and only as clearly as the clearest real array, so it
     adds a crossing ray when something is heard and stays silent otherwise. For demos with one board.
 
     With `follow` (index of a real array) and `zone` (x, y arrays -> bool), the source is not fixed: it is
@@ -299,38 +297,22 @@ class Tracker:
         self.follow, self.zone, self.prefer = follow, zone, None
 
     def _follow_source(self, ray) -> tuple[float, float] | None:
-        """Where on the followed array's ray (bearing, power) the zone is, or None if the ray misses it."""
-        from earshot_arrays.locate import direction
+        """Where on the followed array's ray (bearing, power) the zone is, or None if it misses or is not clear."""
+        from earshot_arrays.mock import zone_point
 
         b, p = ray
         if p < self.min_power:
             return None
-        pose = self.arrays[self.follow].pose
-        dx, dy = direction(b)
-        t = np.arange(0.3, 25.0, 0.05)  # metres along the ray
-        x, y = pose.x + t * dx, pose.y + t * dy
-        inside = np.asarray(self.zone(x, y), dtype=bool)
-        if not inside.any():
-            return None
-        # runs of consecutive samples inside the zone; take the one nearest the preferred point
-        edges = np.flatnonzero(np.diff(np.concatenate([[0], inside.astype(int), [0]])))
-        runs = list(zip(edges[::2], edges[1::2]))
-        ref = self.prefer or self.mock_source
-        mids = [((x[a] + x[e - 1]) / 2, (y[a] + y[e - 1]) / 2) for a, e in runs]
-        if ref is None:
-            return mids[0]
-        return min(mids, key=lambda m: math.hypot(m[0] - ref[0], m[1] - ref[1]))
+        return zone_point(self.arrays[self.follow].pose, b, self.zone, self.prefer or self.mock_source)
 
     def _mock_ray(self, arr, power: float) -> tuple[tuple[float, float], list]:
         """(bearing, power) and a peaked scan of a mocked array toward mock_source."""
-        from earshot_arrays.doa import SCAN_BINS
-        from earshot_arrays.locate import bearing_to
+        from earshot_arrays.mock import mock_bearing
 
         if self.mock_source is None:
             return (0.0, 1.0), []
-        b = (bearing_to(arr.pose, *self.mock_source) + self.rng.normal(0.0, MOCK_SIGMA_DEG)) % 360.0
-        d = (360.0 / SCAN_BINS * (np.arange(SCAN_BINS) + 0.5) - b + 180.0) % 360.0 - 180.0
-        return (b, power), list(np.exp(-0.5 * (d / 15.0) ** 2))
+        b, scan = mock_bearing(arr.pose, self.mock_source, self.rng)
+        return (b, power), scan
 
     def step(self, blocks, classify=None):
         """(rays [(bearing, power)], Estimate, class Result or None) after one block from every array
@@ -401,32 +383,9 @@ def find_office(path: str | None):
     return load_office(path)
 
 
-def mock_zone(spec: str, office):
-    """(x, y) -> bool: inside one of the rectangles "x0,y0,x1,y1;..." and not on furniture."""
-    from earshot_arrays.belief import inside_polygon
-
-    rects = [tuple(float(v) for v in r.split(",")) for r in spec.split(";") if r.strip()]
-    furniture = [list(ar.polygon) for ar in office.areas if ar.kind == "furniture"]
-
-    def inside(x, y):
-        x, y = np.asarray(x, float), np.asarray(y, float)
-        ok = np.zeros(x.shape, bool)
-        for x0, y0, x1, y1 in rects:
-            ok |= (x >= min(x0, x1)) & (x <= max(x0, x1)) & (y >= min(y0, y1)) & (y <= max(y0, y1))
-        for poly in furniture:
-            ok &= ~inside_polygon(x, y, poly)
-        return ok
-
-    return inside
-
-
-# The demo office: the gap between the arrays table and the table west of it, and a strip just behind
-# (west of) that table, along the tables' length
-MOCK_ZONE = "14.05,6.2,15.15,10.9;11.2,6.2,12.38,10.9"
-
-
 def cmd_twin(a) -> None:
     from earshot_arrays.classify import load_classifier
+    from earshot_arrays.mock import zone_from
 
     s = load_setup(a.setup)
     office = find_office(a.office)
@@ -456,7 +415,7 @@ def cmd_twin(a) -> None:
         names = [arr.name for arr in real]
         if a.mock_follow not in names:
             raise SystemExit(f"--mock-follow {a.mock_follow}: the real arrays are {', '.join(names)}")
-        follow, zone = names.index(a.mock_follow), mock_zone(a.mock_zone, office)
+        follow, zone = names.index(a.mock_follow), zone_from(a.mock_zone, office)
         print(f"{a.mock}: follows {a.mock_follow}'s ray, crossing only inside {a.mock_zone}", flush=True)
     tracker = Tracker(arrays, grid, min_power=a.min_power, mock=mock, mock_source=mock_src, doa_s=a.doa_s,
                       loudest=a.loudest if a.loudest < 1 else None, follow=follow, zone=zone)
@@ -612,7 +571,7 @@ def main() -> None:
     p.add_argument("--mock-source", metavar="X,Y", help="where the virtual source starts (default: the office centre)")
     p.add_argument("--mock-follow", metavar="NAME", help="the mock crosses this real array's ray, inside --mock-zone "
                    "only (silent when the ray misses it); a click picks which part of the zone")
-    p.add_argument("--mock-zone", default=MOCK_ZONE, metavar="X0,Y0,X1,Y1;...",
+    p.add_argument("--mock-zone", default=MOCK_ZONE_DEFAULT, metavar="X0,Y0,X1,Y1;...",
                    help="rectangles the mocked crossing may lie in, furniture excluded (default: the demo office's)")
     p.set_defaults(fn=cmd_twin)
 

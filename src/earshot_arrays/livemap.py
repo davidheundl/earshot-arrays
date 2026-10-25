@@ -297,6 +297,12 @@ def add_parser(sub, live) -> None:
                    help="share of the loudest frames the direction is computed on (1 = all frames)")
     p.add_argument("--min-prob", type=float, default=None, help="smoothed class probability needed to show it (default 0.6)")
     p.add_argument("--fast", action="store_true", help="replay as fast as possible instead of in real time")
+    p.add_argument("--mock", metavar="MARK", help="add a virtual array on this office mark (needs --office or office.yaml)"
+                   ": it crosses the followed array's ray inside --mock-zone, and is silent otherwise")
+    p.add_argument("--mock-follow", metavar="NAME", help="the real array the mock crosses (default: the first)")
+    p.add_argument("--mock-zone", default=None, metavar="X0,Y0,X1,Y1;...",
+                   help="rectangles the mocked crossing may lie in, furniture excluded (default: as `twin`)")
+    p.add_argument("--office", help="office YAML for --mock's mark and furniture (default office.yaml)")
     p.add_argument("--no-browser", action="store_true", help="only print the URL")
     p.set_defaults(fn=cmd_live)
 
@@ -321,6 +327,24 @@ def cmd_live(a) -> None:
     if not setup and a.replay and Path(a.replay[0]).is_dir() and (Path(a.replay[0]) / "setup.yaml").exists():
         setup = str(Path(a.replay[0]) / "setup.yaml")
     s = load_setup(setup or "setup.yaml")
+    shown = list(s.arrays)  # the real arrays, plus a mocked one: drawn and tracked, no audio
+    mock = getattr(a, "mock", None)
+    if mock:
+        import dataclasses
+
+        from earshot_arrays.cli import find_office
+        from earshot_arrays.config import Pose
+        from earshot_arrays.mock import MOCK_ZONE, zone_from
+
+        office = find_office(getattr(a, "office", None))
+        follow = getattr(a, "mock_follow", None) or s.arrays[0].name
+        real = {arr.name: arr for arr in s.arrays}
+        if mock not in office.arrays or follow not in real or mock in real:
+            raise SystemExit(f"--mock {mock} --mock-follow {follow}: marks {', '.join(office.arrays)}, "
+                             f"real arrays {', '.join(real)}")
+        mock_pose = Pose(*office.arrays[mock], real[follow].pose.rotation_deg)
+        shown.append(dataclasses.replace(real[follow], name=mock, device=None, pose=mock_pose))
+        mock_zone, mock_src, mock_rng = zone_from(getattr(a, "mock_zone", None) or MOCK_ZONE, office), None, np.random.default_rng(0)
     if a.replay:
         a.realtime = not a.fast
     sources = open_sources(s.arrays, a)
@@ -329,7 +353,7 @@ def cmd_live(a) -> None:
     source = f"REPLAY {Path(a.replay[0]).name}" if a.replay else "LIVE"
     server = LiveMapServer({
         "arrays": [{"name": arr.name, "x": arr.pose.x, "y": arr.pose.y, "rotation": arr.pose.rotation_deg}
-                   for arr in s.arrays],
+                   for arr in shown],
         "radius": a.radius, "classifier": clf.name + (f" ({reason})" if reason else ""),
         "audio": "mic mean" if a.mix else "beam toward the bearing", "source": source,
         "gate": a.gate or GATE, "min_prob": a.min_prob or MIN_PROB, "doa_s": a.doa_s, "loudest": a.loudest,
@@ -338,11 +362,11 @@ def cmd_live(a) -> None:
     if not a.no_browser:
         webbrowser.open(server.url)
     grid = None
-    if len(s.arrays) >= 2:  # one array only gives a fan: the ray says as much
-        xs, ys = [arr.pose.x for arr in s.arrays], [arr.pose.y for arr in s.arrays]
+    if len(shown) >= 2:  # one array only gives a fan: the ray says as much
+        xs, ys = [arr.pose.x for arr in shown], [arr.pose.y for arr in shown]
         grid = Grid.from_bounds(min(xs) - a.radius, min(ys) - a.radius, max(xs) + a.radius, max(ys) + a.radius,
                                 a.cell)
-    tracker = Tracker({arr.name: arr.pose for arr in s.arrays}, min_prob=a.min_prob or MIN_PROB, grid=grid)
+    tracker = Tracker({arr.name: arr.pose for arr in shown}, min_prob=a.min_prob or MIN_PROB, grid=grid)
     gate = a.gate or GATE
     history = {arr.name: deque(maxlen=max(1, round(a.doa_s))) for arr in s.arrays}  # last blocks per array
     t, start, last = 0.0, time.monotonic(), {}
@@ -420,6 +444,14 @@ def cmd_live(a) -> None:
                             f"{len(arrivals[arr.name]) / RATE_WINDOW_S:.1f} blocks/s), {bad[arr.name]} s in a row")
                     else:
                         bad[arr.name] = 0
+            if mock:  # the mock hears a point on the followed ray inside the zone, as clearly as that array
+                from earshot_arrays.mock import mock_bearing, zone_point
+
+                f = obs[follow]
+                src = zone_point(real[follow].pose, f.bearing, mock_zone, mock_src) if f.clear else None
+                mock_src = src or mock_src
+                mb, mscan = mock_bearing(mock_pose, mock_src, mock_rng) if mock_src else (f.bearing, [])
+                obs[mock] = Obs(mb, f.power if src else 1.0, tuple(mscan) if src else (), f.level_db, gate)
             arr = max(s.arrays, key=lambda x: obs[x.name].level_db)  # classify the loudest array
             sig = m[arr.name].mean(axis=0) if a.mix else beam(m[arr.name], arr.profile.fs, arr.profile.mic_xy,
                                                                obs[arr.name].bearing, arr.pose.rotation_deg)

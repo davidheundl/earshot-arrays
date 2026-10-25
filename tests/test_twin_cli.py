@@ -84,11 +84,11 @@ def test_mocked_array_crosses_the_real_ray_and_stays_silent_when_quiet():
 
 
 def test_mock_following_a_real_ray_crosses_only_inside_the_zone():
-    from earshot_arrays.cli import MOCK_ZONE, mock_zone
+    from earshot_arrays.mock import MOCK_ZONE, zone_from
     from earshot_arrays.synth import array_block, drone_like
 
     office = load_office(ROOT / "office.yaml")
-    zone = mock_zone(MOCK_ZONE, office)
+    zone = zone_from(MOCK_ZONE, office)
     real = ArraySetup("A", UMA16, None, Pose(16.05, 9.46, 270.0))
     mock = ArraySetup("B", UMA16, None, Pose(16.05, 6.74, 270.0))
     rng = np.random.default_rng(2)
