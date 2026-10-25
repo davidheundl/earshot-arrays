@@ -466,8 +466,7 @@ def cmd_twin(a) -> None:
     if not a.no_plot:
         from earshot_arrays.twin import TwinPlot
 
-        plot = TwinPlot(office, [(arr.name + (" (mock)" if i in mock else ""), arr.pose)
-                                 for i, arr in enumerate(arrays)], grid, show=not a.save_plot)
+        plot = TwinPlot(office, [(arr.name, arr.pose) for arr in arrays], grid, show=not a.save_plot)
         if a.mock:
             def moved(x: float, y: float) -> None:
                 if follow is not None:  # following: a click only says which part of the zone to prefer
